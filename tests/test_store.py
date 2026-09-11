@@ -13,6 +13,7 @@ from matterbook.store import (
     add_entry,
     mark_failed,
     mark_paired,
+    mark_trial_used,
     read_entries,
     remove_entry,
     update_entry,
@@ -149,7 +150,7 @@ def test_the_book_is_written_privately(tmp_path: Path) -> None:
 def test_unknown_and_missing_columns_are_tolerated(tmp_path: Path) -> None:
     path = tmp_path / "matterbook.csv"
     path.write_text(
-        "id,name,code,future_column\nabc,Lamp,{code},something\n".format(code=QR),
+        f"id,name,code,future_column\nabc,Lamp,{QR},something\n",
         encoding="utf-8",
     )
     (entry,) = read_entries(path)
@@ -178,3 +179,54 @@ def test_write_entries_is_atomic_and_leaves_no_temp_files(tmp_path: Path) -> Non
     entry = add_entry(path, QR)
     write_entries(path, [entry])
     assert [item.name for item in tmp_path.iterdir()] == ["matterbook.csv"]
+
+
+def test_pairing_backfills_what_the_device_turned_out_to_be(tmp_path: Path) -> None:
+    # A row added from a bare passcode knows nothing about the device. After the
+    # first pairing it does, so every later match against it is exact.
+    path = tmp_path / "matterbook.csv"
+    entry = add_entry(path, "20202021", name="Mystery plug")
+    assert entry.vendor_id is None
+    assert entry.identity_strength == "none"
+
+    mark_paired(
+        path,
+        entry.id,
+        node_id=7,
+        vendor_id=65521,
+        product_id=32768,
+        serial_number="SN-12345",
+        unique_id="ABCDEF",
+    )
+    (stored,) = read_entries(path)
+    assert stored.vendor_id == 65521
+    assert stored.product_id == 32768
+    assert stored.serial_number == "SN-12345"
+    assert stored.unique_id == "ABCDEF"
+    assert stored.node_id == 7
+
+
+def test_trial_used_survives_a_round_trip_and_defaults_to_false(tmp_path: Path) -> None:
+    path = tmp_path / "matterbook.csv"
+    entry = add_entry(path, QR)
+    assert entry.trial_used is False
+
+    mark_trial_used(path, entry.id)
+    (stored,) = read_entries(path)
+    assert stored.trial_used is True
+
+
+def test_an_older_book_without_the_new_columns_still_loads(tmp_path: Path) -> None:
+    path = tmp_path / "matterbook.csv"
+    path.write_text(f"id,name,code,enabled\nabc,Lamp,{QR},\n", encoding="utf-8")
+    (entry,) = read_entries(path)
+    # An empty cell means each column's own default, not a blanket true.
+    assert entry.enabled is True
+    assert entry.trial_used is False
+
+
+def test_identity_strength_of_each_code_form(tmp_path: Path) -> None:
+    path = tmp_path / "matterbook.csv"
+    assert add_entry(path, QR).identity_strength == "exact"
+    assert add_entry(path, MANUAL).identity_strength == "short"
+    assert add_entry(path, "20202021").identity_strength == "none"

@@ -7,9 +7,13 @@ discriminator, so a match is as good as an identifier. A manual pairing code onl
 pins the 4-bit short discriminator: **one in sixteen** devices matches by chance,
 which in a house full of Matter gear is a near-certainty rather than an edge case.
 
+A bare 8-digit passcode is weaker still: it names no device at all.
+
 So a match is only acted on when it is unambiguous in both directions: exactly one
 row may claim a device, and exactly one device may answer a row. Anything else is
-reported and left alone for a human.
+reported and left alone for a human — except for the one case a :class:`Trial`
+covers, where a single unmatched row and a single unclaimed device leave nothing
+else it could be.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Final
 
+from .pairing_code import IDENTITY_EXACT, IDENTITY_NONE
 from .store import MatterBookEntry
 
 CONFIDENCE_EXACT: Final = "exact"
@@ -95,6 +100,23 @@ class Match:
         return self.confidence == CONFIDENCE_EXACT
 
 
+@dataclass(frozen=True, slots=True)
+class Trial:
+    """A blind attempt: a row that names no device, and the one device present.
+
+    A bare passcode identifies nothing, and a manual code identifies one device in
+    sixteen. Rather than refuse those outright, MatterBook allows a single attempt
+    when exactly one candidate device is in pairing mode — the common case when
+    someone has just unboxed a device and typed its code in. The device's own
+    advertised discriminator is then used to address it exactly, and what it turns
+    out to be is written back into the book, so the guess happens at most once.
+    """
+
+    entry: MatterBookEntry
+    device: DiscoveredDevice
+    reason: str
+
+
 @dataclass(slots=True)
 class MatchReport:
     """The outcome of matching every discovered device against the book."""
@@ -107,6 +129,9 @@ class MatchReport:
 
     unknown: list[DiscoveredDevice] = field(default_factory=list)
     """Commissionable devices no row claims."""
+
+    trials: list[Trial] = field(default_factory=list)
+    """Blind attempts that are allowed because only one device could be meant."""
 
 
 def _ids_conflict(left: int | None, right: int | None) -> bool:
@@ -153,6 +178,7 @@ def match_devices(
     devices: list[DiscoveredDevice],
     *,
     require_exact: bool = False,
+    allow_trials: bool = True,
 ) -> MatchReport:
     """Match discovered devices against the book.
 
@@ -162,6 +188,8 @@ def match_devices(
         devices: what is currently advertising as commissionable.
         require_exact: drop short-discriminator matches entirely, for installs
             that want auto-pairing only from scanned QR payloads.
+        allow_trials: let a row that names no device take one blind attempt when
+            exactly one unclaimed device is in pairing mode.
 
     Returns:
         A :class:`MatchReport` whose ``matches`` are unambiguous in both
@@ -205,7 +233,47 @@ def match_devices(
         for device in devices
         if device.key not in matched_devices and device.key not in ambiguous_devices
     ]
+
+    if allow_trials and not require_exact:
+        report.trials = _eligible_trials(entries, report, candidates)
     return report
+
+
+def _eligible_trials(
+    entries: list[MatterBookEntry],
+    report: MatchReport,
+    candidates: list[Match],
+) -> list[Trial]:
+    """Return the blind attempts that are safe to make.
+
+    Safe means: exactly one device is up for grabs, exactly one row wants to take
+    a blind shot at it, and that row has never taken one before. Anything less
+    certain is a guess against someone else's device, so it waits for a human.
+    """
+    claimed = {match.entry.id for match in candidates}
+    free_devices = report.unknown
+    if len(free_devices) != 1:
+        return []
+
+    hopefuls = [
+        entry
+        for entry in entries
+        if entry.id not in claimed and not entry.trial_used and entry.is_pairable
+    ]
+    if len(hopefuls) != 1:
+        return []
+
+    entry = hopefuls[0]
+    strength = entry.identity_strength
+    if strength == IDENTITY_EXACT:
+        # An exact row that did not match is simply not this device.
+        return []
+    reason = (
+        "the only entry without a match, and the only device in pairing mode"
+        if strength == IDENTITY_NONE
+        else "short discriminator, and the only device in pairing mode"
+    )
+    return [Trial(entry, free_devices[0], reason)]
 
 
 def _wins(match: Match, rivals: list[Match]) -> bool:

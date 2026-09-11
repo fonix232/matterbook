@@ -16,19 +16,23 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    CONF_ALLOW_TRIALS,
     CONF_APPLY_METADATA,
     CONF_AUTO_PAIR,
     CONF_CSV_PATH,
     CONF_MAX_ATTEMPTS,
+    CONF_PAIR_ON_ADD,
     CONF_PAIR_TIMEOUT,
     CONF_REQUIRE_EXACT_MATCH,
     CONF_RETRY_COOLDOWN,
     CONF_SCAN_INTERVAL,
     CONF_USE_BLUETOOTH,
+    DEFAULT_ALLOW_TRIALS,
     DEFAULT_APPLY_METADATA,
     DEFAULT_AUTO_PAIR,
     DEFAULT_CSV_FILENAME,
     DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_PAIR_ON_ADD,
     DEFAULT_PAIR_TIMEOUT,
     DEFAULT_REQUIRE_EXACT_MATCH,
     DEFAULT_RETRY_COOLDOWN,
@@ -95,6 +99,14 @@ class MatterBookOptionsFlow(OptionsFlow):
                     ): _seconds(30, 86400),
                     vol.Required(
                         CONF_AUTO_PAIR, default=options.get(CONF_AUTO_PAIR, DEFAULT_AUTO_PAIR)
+                    ): BooleanSelector(),
+                    vol.Required(
+                        CONF_ALLOW_TRIALS,
+                        default=options.get(CONF_ALLOW_TRIALS, DEFAULT_ALLOW_TRIALS),
+                    ): BooleanSelector(),
+                    vol.Required(
+                        CONF_PAIR_ON_ADD,
+                        default=options.get(CONF_PAIR_ON_ADD, DEFAULT_PAIR_ON_ADD),
                     ): BooleanSelector(),
                     vol.Required(
                         CONF_REQUIRE_EXACT_MATCH,

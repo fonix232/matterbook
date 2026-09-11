@@ -99,7 +99,7 @@ async def _ephemeral_client(hass: HomeAssistant) -> AsyncIterator[MatterClient]:
     client = _MatterClient(url, async_get_clientsession(hass))
     try:
         await client.connect()
-    except Exception as err:  # noqa: BLE001 - library raises several transport errors
+    except Exception as err:  # the client raises several transport error types
         raise MatterUnavailable(f"Cannot connect to the Matter server at {url}: {err}") from err
     try:
         yield client
@@ -144,7 +144,7 @@ async def async_discover(hass: HomeAssistant, timeout: float) -> list[Commission
                 return await client.discover_commissionable_nodes()
         except TimeoutError as err:
             raise MatterUnavailable(f"Matter server discovery timed out after {timeout}s") from err
-        except Exception as err:  # noqa: BLE001 - surface any server-side failure as one type
+        except Exception as err:  # surface any server-side failure as one type
             raise MatterUnavailable(f"Matter server discovery failed: {err}") from err
 
 
@@ -173,7 +173,7 @@ async def async_commission(
                 return await client.commission_with_code(code, network_only=network_only)
         except TimeoutError as err:
             raise CommissioningFailed(f"Commissioning timed out after {timeout}s") from err
-        except Exception as err:  # noqa: BLE001 - MatterError subclasses plus transport errors
+        except Exception as err:  # MatterError subclasses plus transport errors
             raise CommissioningFailed(str(err) or type(err).__name__) from err
 
 
@@ -188,7 +188,9 @@ def async_ble_available(hass: HomeAssistant) -> bool:
     info = getattr(client, "server_info", None)
     if info is None:
         return False
-    return bool(getattr(info, "bluetooth_enabled", False) or getattr(info, "ble_proxy_enabled", False))
+    return bool(
+        getattr(info, "bluetooth_enabled", False) or getattr(info, "ble_proxy_enabled", False)
+    )
 
 
 def async_credentials_state(hass: HomeAssistant) -> dict[str, bool]:

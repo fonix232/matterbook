@@ -5,10 +5,16 @@ from __future__ import annotations
 import pytest
 
 from matterbook.pairing_code import (
+    IDENTITY_EXACT,
+    IDENTITY_NONE,
+    IDENTITY_SHORT,
+    KIND_PASSCODE,
     InvalidSetupCode,
     base38_decode,
+    encode_qr_payload,
     mask_code,
     parse_setup_code,
+    qr_payload_for,
     verhoeff_checksum,
 )
 
@@ -105,3 +111,77 @@ def test_mask_code_hides_the_passcode() -> None:
     assert masked_manual.startswith("34")
     assert masked_manual.endswith("32")
     assert "970112" not in masked_manual
+
+
+def test_bare_passcode_is_accepted_but_names_no_device() -> None:
+    payload = parse_setup_code("2020-2021")
+    assert payload.kind == KIND_PASSCODE
+    assert payload.passcode == 20202021
+    assert payload.long_discriminator is None
+    assert payload.short_discriminator is None
+    assert payload.identity_strength == IDENTITY_NONE
+
+
+def test_identity_strength_ranks_the_three_forms() -> None:
+    assert parse_setup_code(QR_BLE).identity_strength == IDENTITY_EXACT
+    assert parse_setup_code(MANUAL_SHORT).identity_strength == IDENTITY_SHORT
+    assert parse_setup_code("20202021").identity_strength == IDENTITY_NONE
+
+
+def test_encoder_reproduces_the_reference_payload() -> None:
+    # If the encoder can rebuild the SDK's own payload byte for byte, its bit
+    # layout and base38 are right.
+    assert (
+        encode_qr_payload(
+            passcode=20202021,
+            discriminator=3840,
+            vendor_id=0xFFF1,
+            product_id=0x8000,
+            discovery_capabilities=2,
+        )
+        == QR_BLE
+    )
+
+
+def test_encoder_rejects_impossible_values() -> None:
+    with pytest.raises(InvalidSetupCode):
+        encode_qr_payload(passcode=20202021, discriminator=4096)
+    with pytest.raises(InvalidSetupCode):
+        encode_qr_payload(passcode=12345678, discriminator=1)
+
+
+def test_qr_payload_for_leaves_a_qr_entry_alone() -> None:
+    payload = parse_setup_code(QR_BLE)
+    assert qr_payload_for(payload, discriminator=1234) == QR_BLE
+
+
+def test_qr_payload_for_pins_a_passcode_to_a_discovered_device() -> None:
+    # This is what makes a bare passcode usable: the discriminator comes from the
+    # device's own advertisement, so the synthesised payload names it exactly.
+    payload = parse_setup_code("20202021")
+    synthesised = parse_setup_code(
+        qr_payload_for(payload, discriminator=2748, vendor_id=4660, product_id=22136)
+    )
+    assert synthesised.long_discriminator == 2748
+    assert synthesised.passcode == 20202021
+    assert synthesised.vendor_id == 4660
+    assert synthesised.product_id == 22136
+    assert synthesised.supports_ble is True
+
+
+def test_qr_payload_for_pins_a_manual_code_to_a_discovered_device() -> None:
+    payload = parse_setup_code(MANUAL_SHORT)
+    synthesised = parse_setup_code(qr_payload_for(payload, discriminator=3999))
+    assert synthesised.long_discriminator == 3999
+    assert synthesised.passcode == payload.passcode
+    # The short discriminator of the chosen device still has to agree with the
+    # printed code, or it was the wrong device to aim at.
+    assert synthesised.short_discriminator == payload.short_discriminator
+
+
+def test_base38_round_trips_arbitrary_payloads() -> None:
+    for passcode, discriminator in ((20202021, 0), (99999998, 4095), (1, 2748)):
+        code = encode_qr_payload(passcode=passcode, discriminator=discriminator)
+        payload = parse_setup_code(code)
+        assert payload.passcode == passcode
+        assert payload.long_discriminator == discriminator

@@ -1,0 +1,5 @@
+{
+  "name": "MatterBook",
+  "homeassistant": "2026.6.0",
+  "persistent_directory": "data"
+}

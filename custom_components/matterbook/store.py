@@ -14,14 +14,20 @@ from __future__ import annotations
 
 import csv
 from dataclasses import asdict, dataclass, field, fields
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import os
 from pathlib import Path
 import tempfile
 from typing import Any, Final
 import uuid
 
-from .pairing_code import InvalidSetupCode, SetupPayload, mask_code, parse_setup_code
+from .pairing_code import (
+    IDENTITY_NONE,
+    InvalidSetupCode,
+    SetupPayload,
+    mask_code,
+    parse_setup_code,
+)
 
 STATUS_PENDING: Final = "pending"
 STATUS_PAIRED: Final = "paired"
@@ -46,6 +52,9 @@ class MatterBookEntry:
     """Long (12-bit) discriminator; only a QR payload carries one."""
     short_discriminator: int | None = None
     serial_number: str = ""
+    unique_id: str = ""
+    """Matter unique ID, filled in from the node after a successful pairing."""
+
     area: str = ""
     notes: str = ""
     enabled: bool = True
@@ -54,12 +63,30 @@ class MatterBookEntry:
     paired_at: str = ""
     last_attempt_at: str = ""
     attempt_count: int = 0
+    trial_used: bool = False
+    """Whether this row has spent its one blind pairing attempt.
+
+    A row whose code names no specific device (a bare passcode, or a manual code
+    whose short discriminator fits several devices) gets exactly one try against
+    the single device in front of it. Repeatedly throwing a passcode at devices
+    is both a guessing attack and a way to trip a device's PASE attempt limit,
+    which on some hardware needs a factory reset to clear.
+    """
+
     last_error: str = ""
 
     @property
     def payload(self) -> SetupPayload:
         """Decode this row's setup code."""
         return parse_setup_code(self.code)
+
+    @property
+    def identity_strength(self) -> str:
+        """How precisely this row names a device; see :class:`SetupPayload`."""
+        try:
+            return self.payload.identity_strength
+        except InvalidSetupCode:
+            return IDENTITY_NONE
 
     @property
     def is_pairable(self) -> bool:
@@ -70,7 +97,11 @@ class MatterBookEntry:
         """Return the row without its secret, for UI attributes and diagnostics."""
         data = asdict(self)
         data["code"] = mask_code(self.code) if self.code else ""
-        data["code_type"] = "qr" if self.code.upper().startswith("MT:") else "manual"
+        try:
+            data["code_type"] = self.payload.kind
+        except InvalidSetupCode:
+            data["code_type"] = "invalid"
+        data["identity_strength"] = self.identity_strength
         return data
 
 
@@ -79,12 +110,13 @@ CSV_COLUMNS: Final = tuple(f.name for f in fields(MatterBookEntry))
 _INT_COLUMNS: Final = frozenset(
     {"vendor_id", "product_id", "discriminator", "short_discriminator", "node_id", "attempt_count"}
 )
-_BOOL_COLUMNS: Final = frozenset({"enabled"})
+# Boolean columns and what an empty cell means for each.
+_BOOL_DEFAULTS: Final = {"enabled": True, "trial_used": False}
 
 
 def utcnow_iso() -> str:
     """Return the current UTC time as an ISO 8601 string."""
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def enrich_from_code(entry: MatterBookEntry) -> MatterBookEntry:
@@ -115,7 +147,9 @@ def _parse_value(column: str, raw: str) -> Any:
             return int(value)
         except ValueError:
             return None
-    if column in _BOOL_COLUMNS:
+    if column in _BOOL_DEFAULTS:
+        if value == "":
+            return _BOOL_DEFAULTS[column]
         return value.lower() not in ("false", "0", "no", "off")
     return value
 
@@ -162,7 +196,7 @@ def read_entries(path: Path) -> list[MatterBookEntry]:
 def write_entries(path: Path, entries: list[MatterBookEntry]) -> None:
     """Write the MatterBook atomically, keeping the file private (0600)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    handle = tempfile.NamedTemporaryFile(
+    handle = tempfile.NamedTemporaryFile(  # noqa: SIM115 - closed below, then renamed into place
         "w",
         encoding="utf-8",
         newline="",
@@ -176,7 +210,9 @@ def write_entries(path: Path, entries: list[MatterBookEntry]) -> None:
             writer = csv.DictWriter(handle, fieldnames=CSV_COLUMNS)
             writer.writeheader()
             for entry in entries:
-                writer.writerow({column: _format_value(getattr(entry, column)) for column in CSV_COLUMNS})
+                writer.writerow(
+                    {column: _format_value(getattr(entry, column)) for column in CSV_COLUMNS}
+                )
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(handle.name, 0o600)
@@ -218,7 +254,9 @@ def add_entry(
     return entry
 
 
-def remove_entry(path: Path, *, row: int | None = None, entry_id: str | None = None) -> MatterBookEntry:
+def remove_entry(
+    path: Path, *, row: int | None = None, entry_id: str | None = None
+) -> MatterBookEntry:
     """Delete a row by 1-based row number or by entry id, returning what was deleted.
 
     Row numbers are what the UI shows and they shift after a deletion; the id is
@@ -229,11 +267,12 @@ def remove_entry(path: Path, *, row: int | None = None, entry_id: str | None = N
 
     entries = read_entries(path)
     if entry_id is not None:
-        for index, entry in enumerate(entries):
-            if entry.id == entry_id:
-                break
-        else:
+        found = next(
+            (position for position, entry in enumerate(entries) if entry.id == entry_id), None
+        )
+        if found is None:
             raise MatterBookError(f"No MatterBook entry with id {entry_id}")
+        index = found
     else:
         assert row is not None
         if not 1 <= row <= len(entries):
@@ -262,17 +301,37 @@ def update_entry(path: Path, entry_id: str, **changes: Any) -> MatterBookEntry:
     return entry
 
 
-def mark_paired(path: Path, entry_id: str, node_id: int) -> MatterBookEntry:
-    """Record a successful commissioning against a row."""
-    return update_entry(
-        path,
-        entry_id,
-        status=STATUS_PAIRED,
-        node_id=node_id,
-        paired_at=utcnow_iso(),
-        last_attempt_at=utcnow_iso(),
-        last_error="",
-    )
+def mark_paired(
+    path: Path,
+    entry_id: str,
+    node_id: int,
+    *,
+    vendor_id: int | None = None,
+    product_id: int | None = None,
+    serial_number: str = "",
+    unique_id: str = "",
+) -> MatterBookEntry:
+    """Record a successful commissioning against a row.
+
+    The identity read back from the node is written into the row, so a book
+    filled from bare passcodes ends up knowing what each device actually is.
+    """
+    changes: dict[str, Any] = {
+        "status": STATUS_PAIRED,
+        "node_id": node_id,
+        "paired_at": utcnow_iso(),
+        "last_attempt_at": utcnow_iso(),
+        "last_error": "",
+    }
+    if vendor_id is not None:
+        changes["vendor_id"] = vendor_id
+    if product_id is not None:
+        changes["product_id"] = product_id
+    if serial_number:
+        changes["serial_number"] = serial_number
+    if unique_id:
+        changes["unique_id"] = unique_id
+    return update_entry(path, entry_id, **changes)
 
 
 def mark_failed(path: Path, entry_id: str, error: str, attempt_count: int) -> MatterBookEntry:
@@ -285,6 +344,11 @@ def mark_failed(path: Path, entry_id: str, error: str, attempt_count: int) -> Ma
         last_error=error[:200],
         attempt_count=attempt_count,
     )
+
+
+def mark_trial_used(path: Path, entry_id: str) -> MatterBookEntry:
+    """Record that a row has spent its one blind pairing attempt."""
+    return update_entry(path, entry_id, trial_used=True)
 
 
 def validate_code(code: str) -> SetupPayload:

@@ -16,7 +16,7 @@ from matterbook.store import MatterBookEntry
 
 
 def qr_entry(**kwargs: object) -> MatterBookEntry:
-    """A row stored from a QR payload: it knows the long discriminator."""
+    """Build a row stored from a QR payload, which knows the long discriminator."""
     defaults: dict[str, object] = {
         "code": "MT:Y.K9042C00KA0648G00",
         "discriminator": 3840,
@@ -28,7 +28,7 @@ def qr_entry(**kwargs: object) -> MatterBookEntry:
 
 
 def manual_entry(**kwargs: object) -> MatterBookEntry:
-    """A row stored from a manual code: only the short discriminator."""
+    """Build a row stored from a manual code, which knows only the short one."""
     defaults: dict[str, object] = {
         "code": "34970112332",
         "discriminator": None,
@@ -60,7 +60,9 @@ def test_qr_entry_does_not_match_a_different_discriminator() -> None:
 
 def test_manual_entry_matches_only_on_the_short_discriminator() -> None:
     # 3840 >> 8 == 15, and so does 3841..4095: the manual code cannot tell them apart.
-    match = candidate_match(manual_entry(), device(long_discriminator=3999, vendor_id=None, product_id=None))
+    match = candidate_match(
+        manual_entry(), device(long_discriminator=3999, vendor_id=None, product_id=None)
+    )
     assert match is not None
     assert match.confidence == CONFIDENCE_SHORT
 
@@ -155,3 +157,71 @@ def test_non_commissionable_advertisements_are_ignored() -> None:
 
 def test_matter_server_device_counts_as_on_the_network() -> None:
     assert device(addresses=("192.168.1.5",)).on_ip_network is True
+
+
+def passcode_entry(**kwargs: object) -> MatterBookEntry:
+    """Build a row stored from a bare 8-digit passcode, which names no device."""
+    defaults: dict[str, object] = {"code": "20202021", "id": "pin"}
+    return MatterBookEntry(**{**defaults, **kwargs})  # type: ignore[arg-type]
+
+
+def test_a_passcode_row_never_matches_by_identity() -> None:
+    assert candidate_match(passcode_entry(), device()) is None
+
+
+def test_a_lone_passcode_row_may_try_the_lone_device() -> None:
+    report = match_devices([passcode_entry()], [device()])
+    assert report.matches == []
+    assert len(report.trials) == 1
+    trial = report.trials[0]
+    assert trial.entry.id == "pin"
+    assert trial.device.key == device().key
+
+
+def test_a_row_that_has_already_tried_does_not_try_again() -> None:
+    report = match_devices([passcode_entry(trial_used=True)], [device()])
+    assert report.trials == []
+
+
+def test_no_trial_when_two_devices_are_in_pairing_mode() -> None:
+    report = match_devices(
+        [passcode_entry()],
+        [device(instance_name="one"), device(instance_name="two", long_discriminator=100)],
+    )
+    assert report.trials == []
+
+
+def test_no_trial_when_two_rows_are_waiting() -> None:
+    report = match_devices(
+        [passcode_entry(), passcode_entry(id="pin2", code="20202021")], [device()]
+    )
+    assert report.trials == []
+
+
+def test_no_trial_when_the_device_already_belongs_to_a_matched_row() -> None:
+    report = match_devices([qr_entry(), passcode_entry()], [device()])
+    assert [match.entry.id for match in report.matches] == ["qr"]
+    assert report.trials == []
+
+
+def test_a_manual_row_may_try_a_device_it_cannot_pin_down() -> None:
+    # The short discriminator does not agree, so it is not even a weak match --
+    # but it is the only row and the only device, so one attempt is allowed.
+    report = match_devices(
+        [manual_entry()], [device(long_discriminator=100, vendor_id=None, product_id=None)]
+    )
+    assert report.matches == []
+    assert len(report.trials) == 1
+
+
+def test_an_exact_row_never_takes_a_blind_attempt() -> None:
+    # A QR row that did not match is simply not this device, so there is nothing
+    # to guess at.
+    report = match_devices([qr_entry()], [device(long_discriminator=100)])
+    assert report.trials == []
+    assert len(report.unknown) == 1
+
+
+def test_trials_can_be_turned_off() -> None:
+    assert match_devices([passcode_entry()], [device()], allow_trials=False).trials == []
+    assert match_devices([passcode_entry()], [device()], require_exact=True).trials == []

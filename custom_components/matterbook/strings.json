@@ -28,41 +28,75 @@
           "apply_metadata": "Apply the stored name and area after pairing",
           "pair_timeout": "Commissioning timeout",
           "max_attempts": "Attempts before giving up on an entry",
-          "retry_cooldown": "Cooldown after a failed attempt"
+          "retry_cooldown": "Cooldown after a failed attempt",
+          "allow_trials": "Allow one blind attempt per entry",
+          "pair_on_add": "Try to pair straight after adding an entry"
         },
         "data_description": {
           "require_exact_match": "A manual pairing code only carries 4 bits of discriminator, so one in sixteen devices matches by chance. Turn this on to act only on entries stored as a scanned QR payload.",
           "use_bluetooth": "Reads advertisements Home Assistant already collects, including those relayed by ESPHome Bluetooth proxies.",
-          "retry_cooldown": "Doubles with every failed attempt, up to eight times this value."
+          "retry_cooldown": "Doubles with every failed attempt, up to eight times this value.",
+          "allow_trials": "An 8-digit setup passcode names no device at all, and a manual pairing code names one in sixteen. When exactly one entry and one device are left unaccounted for, MatterBook may spend a single attempt on it — once per entry, never repeatedly.",
+          "pair_on_add": "The moment you type in a code is usually the moment the device is in front of you and blinking, and the moment the fewest other devices are in pairing mode."
         }
       }
     }
   },
   "entity": {
     "button": {
-      "add_entry": { "name": "Add entry" },
-      "delete_entry": { "name": "Delete entry" },
-      "scan_now": { "name": "Scan now" }
+      "add_entry": {
+        "name": "Add entry"
+      },
+      "delete_entry": {
+        "name": "Delete entry"
+      },
+      "scan_now": {
+        "name": "Scan now"
+      }
     },
     "number": {
-      "delete_row": { "name": "Row to delete" }
+      "delete_row": {
+        "name": "Row to delete"
+      }
     },
     "sensor": {
-      "entries": { "name": "Entries" },
-      "pending": { "name": "Pending entries" },
-      "discovered": { "name": "Commissionable devices" },
-      "last_scan": { "name": "Last scan" },
-      "last_paired": { "name": "Last paired" }
+      "entries": {
+        "name": "Entries"
+      },
+      "pending": {
+        "name": "Pending entries"
+      },
+      "discovered": {
+        "name": "Commissionable devices"
+      },
+      "last_scan": {
+        "name": "Last scan"
+      },
+      "last_paired": {
+        "name": "Last paired"
+      }
     },
     "switch": {
-      "auto_pairing": { "name": "Auto pairing" }
+      "auto_pairing": {
+        "name": "Auto pairing"
+      }
     },
     "text": {
-      "new_entry_code": { "name": "New entry setup code" },
-      "new_entry_name": { "name": "New entry name" },
-      "new_entry_area": { "name": "New entry area" },
-      "new_entry_notes": { "name": "New entry notes" },
-      "new_entry_serial_number": { "name": "New entry serial number" }
+      "new_entry_code": {
+        "name": "New entry setup code"
+      },
+      "new_entry_name": {
+        "name": "New entry name"
+      },
+      "new_entry_area": {
+        "name": "New entry area"
+      },
+      "new_entry_notes": {
+        "name": "New entry notes"
+      },
+      "new_entry_serial_number": {
+        "name": "New entry serial number"
+      }
     }
   },
   "services": {
@@ -72,20 +106,38 @@
       "fields": {
         "code": {
           "name": "Setup code",
-          "description": "The QR payload (MT:...) or the 11- or 21-digit manual pairing code."
+          "description": "The QR payload (MT:...), the 11- or 21-digit manual pairing code, or the bare 8-digit setup passcode. A QR payload is worth the most: it names exactly which device the code opens."
         },
-        "name": { "name": "Name", "description": "Name to give the device once it is paired." },
-        "area": { "name": "Area", "description": "Area to put the device in once it is paired." },
-        "notes": { "name": "Notes", "description": "Free-form note, such as where the device is." },
-        "serial_number": { "name": "Serial number", "description": "Serial number, for your own records." }
+        "name": {
+          "name": "Name",
+          "description": "Name to give the device once it is paired."
+        },
+        "area": {
+          "name": "Area",
+          "description": "Area to put the device in once it is paired."
+        },
+        "notes": {
+          "name": "Notes",
+          "description": "Free-form note, such as where the device is."
+        },
+        "serial_number": {
+          "name": "Serial number",
+          "description": "Serial number, for your own records."
+        }
       }
     },
     "remove_entry": {
       "name": "Remove entry",
       "description": "Removes a device from the MatterBook.",
       "fields": {
-        "row": { "name": "Row", "description": "1-based row number, as shown on the Entries sensor." },
-        "entry_id": { "name": "Entry ID", "description": "Stable id of the entry, which does not shift when other rows are deleted." }
+        "row": {
+          "name": "Row",
+          "description": "1-based row number, as shown on the Entries sensor."
+        },
+        "entry_id": {
+          "name": "Entry ID",
+          "description": "Stable id of the entry, which does not shift when other rows are deleted."
+        }
       }
     },
     "scan": {
@@ -96,8 +148,14 @@
       "name": "Pair",
       "description": "Commissions one MatterBook entry now, whether or not it was seen in a scan.",
       "fields": {
-        "row": { "name": "Row", "description": "1-based row number, as shown on the Entries sensor." },
-        "entry_id": { "name": "Entry ID", "description": "Stable id of the entry." }
+        "row": {
+          "name": "Row",
+          "description": "1-based row number, as shown on the Entries sensor."
+        },
+        "entry_id": {
+          "name": "Entry ID",
+          "description": "Stable id of the entry."
+        }
       }
     },
     "reload_book": {

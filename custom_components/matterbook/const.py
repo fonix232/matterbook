@@ -18,6 +18,8 @@ CONF_RETRY_COOLDOWN: Final = "retry_cooldown"
 CONF_REQUIRE_EXACT_MATCH: Final = "require_exact_match"
 CONF_APPLY_METADATA: Final = "apply_metadata"
 CONF_USE_BLUETOOTH: Final = "use_bluetooth"
+CONF_ALLOW_TRIALS: Final = "allow_trials"
+CONF_PAIR_ON_ADD: Final = "pair_on_add"
 
 DEFAULT_SCAN_INTERVAL: Final = 300
 DEFAULT_PAIR_TIMEOUT: Final = 180
@@ -27,6 +29,8 @@ DEFAULT_AUTO_PAIR: Final = True
 DEFAULT_REQUIRE_EXACT_MATCH: Final = False
 DEFAULT_APPLY_METADATA: Final = True
 DEFAULT_USE_BLUETOOTH: Final = True
+DEFAULT_ALLOW_TRIALS: Final = True
+DEFAULT_PAIR_ON_ADD: Final = True
 
 SERVICE_ADD_ENTRY: Final = "add_entry"
 SERVICE_REMOVE_ENTRY: Final = "remove_entry"
@@ -46,6 +50,7 @@ EVENT_DISCOVERED: Final = f"{DOMAIN}_discovered"
 EVENT_PAIRED: Final = f"{DOMAIN}_paired"
 EVENT_PAIR_FAILED: Final = f"{DOMAIN}_pair_failed"
 EVENT_AMBIGUOUS: Final = f"{DOMAIN}_ambiguous_match"
+EVENT_TRIAL: Final = f"{DOMAIN}_trial_pairing"
 
 # 16-bit Matter service UUID, in the 128-bit form Home Assistant's bluetooth
 # component reports. Commissionable devices put their discriminator, vendor and

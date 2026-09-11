@@ -14,6 +14,8 @@ select = [
   "SIM", # simplify
   "D",   # pydocstyle: Home Assistant requires docstrings
   "RUF",
+  "BLE001",  # blind except: allowed only where deliberately annotated
+  "PLC0415", # import not at top level: same
 ]
 ignore = [
   "D203", # incompatible with D211

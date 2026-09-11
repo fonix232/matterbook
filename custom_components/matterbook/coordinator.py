@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from functools import partial
 import logging
 from pathlib import Path
 from typing import Any
@@ -18,17 +19,21 @@ from homeassistant.util import dt as dt_util
 from . import matter_link
 from .ble import async_discover_ble_devices
 from .const import (
+    CONF_ALLOW_TRIALS,
     CONF_APPLY_METADATA,
     CONF_AUTO_PAIR,
     CONF_MAX_ATTEMPTS,
+    CONF_PAIR_ON_ADD,
     CONF_PAIR_TIMEOUT,
     CONF_REQUIRE_EXACT_MATCH,
     CONF_RETRY_COOLDOWN,
     CONF_SCAN_INTERVAL,
     CONF_USE_BLUETOOTH,
+    DEFAULT_ALLOW_TRIALS,
     DEFAULT_APPLY_METADATA,
     DEFAULT_AUTO_PAIR,
     DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_PAIR_ON_ADD,
     DEFAULT_PAIR_TIMEOUT,
     DEFAULT_REQUIRE_EXACT_MATCH,
     DEFAULT_RETRY_COOLDOWN,
@@ -39,13 +44,23 @@ from .const import (
     EVENT_DISCOVERED,
     EVENT_PAIR_FAILED,
     EVENT_PAIRED,
+    EVENT_TRIAL,
 )
-from .matching import SOURCE_MATTER_SERVER, DiscoveredDevice, Match, MatchReport, match_devices
+from .matching import (
+    SOURCE_MATTER_SERVER,
+    DiscoveredDevice,
+    Match,
+    MatchReport,
+    Trial,
+    match_devices,
+)
+from .pairing_code import InvalidSetupCode, qr_payload_for
 from .store import (
     MatterBookEntry,
     add_entry,
     mark_failed,
     mark_paired,
+    mark_trial_used,
     read_entries,
     remove_entry,
 )
@@ -53,6 +68,13 @@ from .store import (
 _LOGGER = logging.getLogger(__name__)
 
 DISCOVERY_TIMEOUT = 30.0
+
+# Basic Information cluster (0x0028) attribute paths on the root endpoint, used to
+# learn what a device actually is once it has been commissioned.
+ATTR_PATH_VENDOR_ID = "0/40/2"
+ATTR_PATH_PRODUCT_ID = "0/40/4"
+ATTR_PATH_SERIAL_NUMBER = "0/40/15"
+ATTR_PATH_UNIQUE_ID = "0/40/18"
 METADATA_WAIT_SECONDS = 60
 METADATA_POLL_SECONDS = 2
 
@@ -124,9 +146,21 @@ class MatterBookCoordinator(DataUpdateCoordinator[MatterBookData]):
         return entries
 
     async def async_add_entry(self, **kwargs: Any) -> MatterBookEntry:
-        """Add a row, then re-read the book."""
+        """Add a row, then re-read the book and try to pair it straight away.
+
+        Someone who has just typed in a code is usually standing in front of the
+        device with it blinking at them, so the useful moment to scan is now,
+        not at the next sweep. This is also when a code that names no device is
+        least ambiguous: there is typically only one device in pairing mode.
+        """
         entry = await self.hass.async_add_executor_job(lambda: add_entry(self.csv_path, **kwargs))
         await self.async_load_book()
+
+        if self.auto_pair_enabled and self._option(CONF_PAIR_ON_ADD, DEFAULT_PAIR_ON_ADD):
+            assert self.config_entry is not None
+            self.config_entry.async_create_background_task(
+                self.hass, self.async_scan(), name=f"{DOMAIN}_pair_on_add"
+            )
         return entry
 
     async def async_remove_entry(
@@ -148,11 +182,11 @@ class MatterBookCoordinator(DataUpdateCoordinator[MatterBookData]):
         and the update loop should not be held open for it.
         """
         data = await self.async_scan_only()
-        if self.auto_pair_enabled and data.report.matches:
+        if self.auto_pair_enabled and (data.report.matches or data.report.trials):
             assert self.config_entry is not None
             self.config_entry.async_create_background_task(
                 self.hass,
-                self._async_pair_matches(list(data.report.matches)),
+                self._async_pair_all(list(data.report.matches), list(data.report.trials)),
                 name=f"{DOMAIN}_auto_pair",
             )
         return data
@@ -168,6 +202,7 @@ class MatterBookCoordinator(DataUpdateCoordinator[MatterBookData]):
             require_exact=bool(
                 self._option(CONF_REQUIRE_EXACT_MATCH, DEFAULT_REQUIRE_EXACT_MATCH)
             ),
+            allow_trials=bool(self._option(CONF_ALLOW_TRIALS, DEFAULT_ALLOW_TRIALS)),
         )
 
         self.data.discovered = devices
@@ -200,8 +235,8 @@ class MatterBookCoordinator(DataUpdateCoordinator[MatterBookData]):
         data = await self.async_scan_only()
         self.async_update_listeners()
         should_pair = self.auto_pair_enabled if pair is None else pair
-        if should_pair and data.report.matches:
-            await self._async_pair_matches(list(data.report.matches))
+        if should_pair:
+            await self._async_pair_all(list(data.report.matches), list(data.report.trials))
         return self.data
 
     async def _async_discover(self) -> list[DiscoveredDevice]:
@@ -237,16 +272,47 @@ class MatterBookCoordinator(DataUpdateCoordinator[MatterBookData]):
 
     # ----- pairing ---------------------------------------------------------
 
-    async def _async_pair_matches(self, matches: list[Match]) -> None:
-        """Pair matched devices one at a time.
+    async def _async_pair_all(self, matches: list[Match], trials: list[Trial]) -> None:
+        """Pair matched devices, then take any allowed blind attempt.
 
         The Matter server commissions one device at a time and a round trip can
-        take a minute or more, so this is deliberately serial.
+        take a minute or more, so this is deliberately serial. Matches go first:
+        a blind attempt is only ever reasonable on what is left over.
         """
         for match in matches:
             if not self._may_attempt(match.entry):
                 continue
             await self.async_pair(match.entry, match.device)
+
+        if not matches:
+            for trial in trials:
+                await self._async_run_trial(trial)
+
+    async def _async_run_trial(self, trial: Trial) -> None:
+        """Spend a row's one blind attempt on the only device in pairing mode."""
+        if trial.entry.trial_used or not self._may_attempt(trial.entry):
+            return
+        _LOGGER.info(
+            "Trying MatterBook entry %s (%s) against %s: %s",
+            trial.entry.id,
+            trial.entry.name or "unnamed",
+            trial.device.key,
+            trial.reason,
+        )
+        self.hass.bus.async_fire(
+            EVENT_TRIAL,
+            {
+                "entry_id": trial.entry.id,
+                "name": trial.entry.name,
+                "reason": trial.reason,
+                **trial.device.describe(),
+            },
+        )
+        # Spend the attempt before making it: a crash or a restart mid-commission
+        # must not hand the row a second free guess.
+        await self.hass.async_add_executor_job(mark_trial_used, self.csv_path, trial.entry.id)
+        trial.entry.trial_used = True
+        await self.async_pair(trial.entry, trial.device)
 
     def _may_attempt(self, entry: MatterBookEntry) -> bool:
         """Whether a row is out of cooldown and under its attempt limit."""
@@ -265,17 +331,26 @@ class MatterBookCoordinator(DataUpdateCoordinator[MatterBookData]):
             self._attempts[entry.id] = attempt
             network_only = self._network_only_for(device)
 
+            try:
+                code = self._code_for(entry, device)
+            except InvalidSetupCode as err:
+                await self._async_record_failure(
+                    entry, f"unusable setup code: {err}", attempt, device
+                )
+                return None
+
             _LOGGER.info(
-                "Commissioning MatterBook entry %s (%s), attempt %s, network_only=%s",
+                "Commissioning MatterBook entry %s (%s), attempt %s, network_only=%s%s",
                 entry.id,
                 entry.name or "unnamed",
                 attempt,
                 network_only,
+                "" if code == entry.code else ", addressed by the device's own discriminator",
             )
             try:
                 node = await matter_link.async_commission(
                     self.hass,
-                    entry.code,
+                    code,
                     network_only=network_only,
                     timeout=float(self._option(CONF_PAIR_TIMEOUT, DEFAULT_PAIR_TIMEOUT)),
                 )
@@ -283,8 +358,9 @@ class MatterBookCoordinator(DataUpdateCoordinator[MatterBookData]):
                 await self._async_record_failure(entry, str(err), attempt, device)
                 return None
 
+            identity = _identity_from_node(node)
             await self.hass.async_add_executor_job(
-                mark_paired, self.csv_path, entry.id, node.node_id
+                partial(mark_paired, self.csv_path, entry.id, node.node_id, **identity)
             )
             self._cooldowns.pop(entry.id, None)
             self._attempts.pop(entry.id, None)
@@ -312,6 +388,25 @@ class MatterBookCoordinator(DataUpdateCoordinator[MatterBookData]):
 
             await self.async_load_book()
             return node.node_id
+
+    def _code_for(self, entry: MatterBookEntry, device: DiscoveredDevice | None) -> str:
+        """Return the code to hand the server for this row and device.
+
+        A row stored as a QR payload already names its device. A manual code or a
+        bare passcode does not, so the discriminator the device is advertising is
+        folded in: that turns a 1-in-16 (or blind) attempt into an exact address,
+        and lets a printed passcode commission over BLE, which on its own it
+        cannot do.
+        """
+        payload = entry.payload
+        if device is None or device.long_discriminator is None:
+            return payload.code
+        return qr_payload_for(
+            payload,
+            discriminator=device.long_discriminator,
+            vendor_id=device.vendor_id,
+            product_id=device.product_id,
+        )
 
     def _network_only_for(self, device: DiscoveredDevice | None) -> bool:
         """Decide whether to restrict commissioning to the IP network.
@@ -387,7 +482,7 @@ class MatterBookCoordinator(DataUpdateCoordinator[MatterBookData]):
 
         device_registry = dr.async_get(self.hass)
         device = None
-        for _ in range(METADATA_WAIT_SECONDS // METADATA_POLL_SECONDS):
+        for _attempt in range(METADATA_WAIT_SECONDS // METADATA_POLL_SECONDS):
             device = device_registry.async_get_device(identifiers={identifier})
             if device is not None:
                 break
@@ -408,6 +503,29 @@ class MatterBookCoordinator(DataUpdateCoordinator[MatterBookData]):
         if updates:
             device_registry.async_update_device(device.id, **updates)
             _LOGGER.debug("Applied MatterBook metadata to device %s: %s", device.id, updates)
+
+
+def _identity_from_node(node: Any) -> dict[str, Any]:
+    """Read what a freshly commissioned node says it is.
+
+    This is how a book filled from bare passcodes teaches itself: after the first
+    pairing the row carries the real vendor, product and serial number, so any
+    later match against it is exact.
+    """
+    attributes = getattr(node, "attributes", None) or {}
+
+    def _as_int(value: Any) -> int | None:
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    def _as_str(value: Any) -> str:
+        return value.strip() if isinstance(value, str) else ""
+
+    return {
+        "vendor_id": _as_int(attributes.get(ATTR_PATH_VENDOR_ID)),
+        "product_id": _as_int(attributes.get(ATTR_PATH_PRODUCT_ID)),
+        "serial_number": _as_str(attributes.get(ATTR_PATH_SERIAL_NUMBER)),
+        "unique_id": _as_str(attributes.get(ATTR_PATH_UNIQUE_ID)),
+    }
 
 
 def _deduplicate(devices: list[DiscoveredDevice]) -> list[DiscoveredDevice]:

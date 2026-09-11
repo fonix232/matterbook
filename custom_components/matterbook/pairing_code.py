@@ -1,16 +1,23 @@
-"""Decoding of Matter onboarding payloads (QR payload and manual pairing code).
+"""Reading and writing Matter onboarding payloads.
 
 Pure Python, no Home Assistant imports: this module is unit-testable on its own.
 
-Both payload forms carry the discriminator that a commissionable device also puts
-in its BLE advertisement and its `_matterc._udp` mDNS record, which is what lets
-MatterBook recognise a device in pairing mode without any user interaction:
+Three things get printed on a device label, and they pin down *which* device they
+belong to to very different degrees — which is what decides whether MatterBook may
+pair something on its own:
 
-* a QR payload (``MT:...``) carries the full **12-bit** discriminator, so a match
-  against a discovered device is exact (1 in 4096);
-* a manual pairing code only carries the **4-bit short** discriminator (the top
-  four bits of the long one), so a match narrows to 1 in 16 and needs the
-  vendor/product ID (21-digit codes only) or operator judgement to disambiguate.
+* a **QR payload** (``MT:...``) carries the full **12-bit** discriminator, so a
+  match against a discovered device is exact: 1 in 4096;
+* an 11- or 21-digit **manual pairing code** carries only the **4-bit short**
+  discriminator (the top four bits of the long one), so a match narrows to 1 in
+  16 and leans on the vendor/product ID (21-digit codes only) to do better;
+* a bare 8-digit **setup passcode** — what most labels print in large type —
+  carries no discriminator at all and names no device whatsoever.
+
+The last two can still be commissioned exactly, because a discovered device
+*advertises* its long discriminator: :func:`qr_payload_for` combines the passcode
+from the label with the discriminator from the advertisement into a synthetic QR
+payload, which the Matter server commissions over BLE or IP like any other.
 
 References (Matter Core Specification 1.x, chapter 5.1):
 * 5.1.3.1 QR payload bit layout and base38 encoding
@@ -24,6 +31,14 @@ import re
 from typing import Final
 
 QR_PREFIX: Final = "MT:"
+
+KIND_QR: Final = "qr"
+KIND_MANUAL: Final = "manual"
+KIND_PASSCODE: Final = "passcode"
+
+IDENTITY_EXACT: Final = "exact"
+IDENTITY_SHORT: Final = "short"
+IDENTITY_NONE: Final = "none"
 
 # Matter base38 alphabet, spec 5.1.3.1.
 _BASE38_ALPHABET: Final = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-."
@@ -97,17 +112,31 @@ class SetupPayload:
     """A decoded Matter onboarding payload."""
 
     kind: str
-    """``"qr"`` for an ``MT:`` payload, ``"manual"`` for a pairing code."""
+    """One of :data:`KIND_QR`, :data:`KIND_MANUAL` or :data:`KIND_PASSCODE`."""
 
     code: str
     """The payload in its normalised form, as it should be handed to the server."""
 
     passcode: int
-    short_discriminator: int
+    short_discriminator: int | None = None
     long_discriminator: int | None = None
     vendor_id: int | None = None
     product_id: int | None = None
     discovery_capabilities: int | None = None
+
+    @property
+    def identity_strength(self) -> str:
+        """How well this payload pins down *which* device it belongs to.
+
+        ``"exact"``  the full 12-bit discriminator (1 in 4096), from a QR payload.
+        ``"short"``  the 4-bit short discriminator (1 in 16), from a manual code.
+        ``"none"``   nothing at all: a bare passcode names no device.
+        """
+        if self.long_discriminator is not None:
+            return IDENTITY_EXACT
+        if self.short_discriminator is not None:
+            return IDENTITY_SHORT
+        return IDENTITY_NONE
 
     @property
     def supports_ble(self) -> bool | None:
@@ -181,6 +210,77 @@ def _stated_id(value: int) -> int | None:
     return value or None
 
 
+def base38_encode(data: bytes) -> str:
+    """Encode bytes as a Matter base38 string (spec 5.1.3.1)."""
+    result: list[str] = []
+    for offset in range(0, len(data), 3):
+        group = data[offset : offset + 3]
+        char_count = {3: 5, 2: 4, 1: 2}[len(group)]
+        value = int.from_bytes(group, "little")
+        for _ in range(char_count):
+            value, remainder = divmod(value, 38)
+            result.append(_BASE38_ALPHABET[remainder])
+    return "".join(result)
+
+
+def _write_bits(data: bytearray, offset: int, length: int, value: int) -> None:
+    """Write ``length`` bits at ``offset`` into an LSB-first bit stream."""
+    if value >= 1 << length:
+        raise InvalidSetupCode(f"Value {value} does not fit in {length} bits")
+    for index in range(length):
+        if value >> index & 1:
+            bit = offset + index
+            data[bit // 8] |= 1 << (bit % 8)
+
+
+def encode_qr_payload(
+    *,
+    passcode: int,
+    discriminator: int,
+    vendor_id: int | None = None,
+    product_id: int | None = None,
+    discovery_capabilities: int = DISCOVERY_CAPABILITY_BLE | DISCOVERY_CAPABILITY_ON_IP_NETWORK,
+) -> str:
+    """Build an ``MT:`` QR payload from its parts."""
+    _validate_passcode(passcode)
+    if not 0 <= discriminator <= 0xFFF:
+        raise InvalidSetupCode(f"Discriminator {discriminator} is not a 12-bit value")
+
+    data = bytearray(_QR_PAYLOAD_BYTES)
+    _write_bits(data, *_QR_VERSION, 0)
+    _write_bits(data, *_QR_VENDOR_ID, vendor_id or 0)
+    _write_bits(data, *_QR_PRODUCT_ID, product_id or 0)
+    _write_bits(data, *_QR_FLOW_TYPE, 0)
+    _write_bits(data, *_QR_DISCOVERY_CAPABILITIES, discovery_capabilities)
+    _write_bits(data, *_QR_DISCRIMINATOR, discriminator)
+    _write_bits(data, *_QR_PASSCODE, passcode)
+    return QR_PREFIX + base38_encode(bytes(data))
+
+
+def qr_payload_for(
+    payload: SetupPayload,
+    *,
+    discriminator: int,
+    vendor_id: int | None = None,
+    product_id: int | None = None,
+) -> str:
+    """Return a code that commissions ``payload`` against one specific device.
+
+    A QR payload already names its device, so it is handed back unchanged. A
+    manual code or a bare passcode is combined with the long discriminator the
+    device is advertising, which turns a 1-in-16 (or blind) guess into an exact
+    address — and, unlike the printed manual code, works over BLE as well.
+    """
+    if payload.long_discriminator is not None:
+        return payload.code
+    return encode_qr_payload(
+        passcode=payload.passcode,
+        discriminator=discriminator,
+        vendor_id=vendor_id if vendor_id is not None else payload.vendor_id,
+        product_id=product_id if product_id is not None else payload.product_id,
+    )
+
+
 def parse_qr_payload(code: str) -> SetupPayload:
     """Decode an ``MT:`` QR payload."""
     normalised = code.strip().upper().replace(" ", "")
@@ -200,7 +300,7 @@ def parse_qr_payload(code: str) -> SetupPayload:
     discriminator = _read_bits(data, *_QR_DISCRIMINATOR)
 
     return SetupPayload(
-        kind="qr",
+        kind=KIND_QR,
         code=normalised,
         passcode=passcode,
         long_discriminator=discriminator,
@@ -236,7 +336,7 @@ def parse_manual_code(code: str) -> SetupPayload:
         product_id = _stated_id(int(digits[15:20]))
 
     return SetupPayload(
-        kind="manual",
+        kind=KIND_MANUAL,
         code=digits,
         passcode=passcode,
         short_discriminator=short_discriminator,
@@ -245,17 +345,34 @@ def parse_manual_code(code: str) -> SetupPayload:
     )
 
 
+def parse_passcode(code: str) -> SetupPayload:
+    """Read a bare 8-digit setup passcode.
+
+    This is the number most labels print in large type. It carries no
+    discriminator, so on its own it says *what the secret is* but not *which
+    device it opens*; see :func:`qr_payload_for`.
+    """
+    digits = re.sub(r"\D", "", code)
+    if len(digits) != 8:
+        raise InvalidSetupCode(f"A setup passcode has 8 digits, got {len(digits)}")
+    passcode = int(digits)
+    _validate_passcode(passcode)
+    return SetupPayload(kind=KIND_PASSCODE, code=digits, passcode=passcode)
+
+
 def parse_setup_code(code: str) -> SetupPayload:
-    """Decode either onboarding payload form.
+    """Decode any of the three onboarding payload forms.
 
     Raises:
-        InvalidSetupCode: if the string is neither a QR payload nor a pairing code.
+        InvalidSetupCode: if the string is none of them.
     """
     candidate = code.strip()
     if not candidate:
         raise InvalidSetupCode("Setup code is empty")
     if candidate.upper().startswith(QR_PREFIX):
         return parse_qr_payload(candidate)
+    if len(re.sub(r"\D", "", candidate)) == 8:
+        return parse_passcode(candidate)
     return parse_manual_code(candidate)
 
 
