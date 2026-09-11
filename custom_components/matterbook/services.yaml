@@ -50,3 +50,17 @@ pair:
         text:
 
 reload_book:
+
+import_from_matter:
+
+set_code:
+  fields:
+    entry_id:
+      required: true
+      selector:
+        text:
+    code:
+      required: true
+      example: "MT:Y.K9042C00KA0648G00"
+      selector:
+        text:

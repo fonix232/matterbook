@@ -46,6 +46,7 @@ from .const import (
     EVENT_PAIRED,
     EVENT_TRIAL,
 )
+from .importer import async_collect_candidates
 from .matching import (
     SOURCE_MATTER_SERVER,
     DiscoveredDevice,
@@ -58,11 +59,13 @@ from .pairing_code import InvalidSetupCode, qr_payload_for
 from .store import (
     MatterBookEntry,
     add_entry,
+    add_imported_entry,
     mark_failed,
     mark_paired,
     mark_trial_used,
     read_entries,
     remove_entry,
+    set_entry_code,
     update_entry,
 )
 
@@ -172,6 +175,54 @@ class MatterBookCoordinator(DataUpdateCoordinator[MatterBookData]):
         """Edit one row's description, then re-read the book."""
         entry = await self.hass.async_add_executor_job(
             partial(update_entry, self.csv_path, entry_id, **changes)
+        )
+        await self.async_load_book()
+        return entry
+
+    async def async_import_from_matter(self) -> dict[str, int]:
+        """Snapshot the devices already commissioned onto this fabric.
+
+        The setup codes cannot come with them — a commissioned node does not hold
+        its passcode — so each device becomes a row that knows what it is and
+        where it lives, and waits for its sticker. See importer.py.
+        """
+        # Not in an executor: this only reads in-memory node and registry state,
+        # and Home Assistant's device and area registries are not thread-safe.
+        candidates = async_collect_candidates(self.hass)
+        imported = 0
+        for candidate in candidates:
+            entry = await self.hass.async_add_executor_job(
+                partial(
+                    add_imported_entry,
+                    self.csv_path,
+                    node_id=candidate.node_id,
+                    name=candidate.name,
+                    area=candidate.area,
+                    vendor_id=candidate.vendor_id,
+                    product_id=candidate.product_id,
+                    serial_number=candidate.serial_number,
+                    unique_id=candidate.unique_id,
+                )
+            )
+            if entry is not None:
+                imported += 1
+
+        await self.async_load_book()
+        _LOGGER.info(
+            "Imported %s of %s commissioned Matter devices into the MatterBook",
+            imported,
+            len(candidates),
+        )
+        return {
+            "found": len(candidates),
+            "imported": imported,
+            "already_known": len(candidates) - imported,
+        }
+
+    async def async_set_code(self, entry_id: str, code: str) -> MatterBookEntry:
+        """Give an imported row its setup code."""
+        entry = await self.hass.async_add_executor_job(
+            partial(set_entry_code, self.csv_path, entry_id, code)
         )
         await self.async_load_book()
         return entry

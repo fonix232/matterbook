@@ -142,6 +142,31 @@ The rows contain passcodes. They are masked everywhere they could leak —
 entity attributes, events, diagnostics and log lines — and the file deserves the
 same treatment as `secrets.yaml`.
 
+## Importing an existing fabric
+
+A snapshot of a running Matter setup recovers everything except the one thing
+that matters most.
+
+**Not the setup codes.** Commissioning is PASE (SPAKE2+): the device stores a
+verifier derived from the passcode, and the commissioner discards the passcode
+when it is done. The server's own node record (`MatterNodeData`) has no field
+for one, and across the whole server API a passcode appears only as an *input*.
+`open_commissioning_window` does return a code, but that is the Enhanced
+Commissioning Method minting a temporary passcode that dies with the window —
+and a factory-reset device reverts to the passcode printed on its label. **The
+sticker is the only copy**, which is the reason this project exists.
+
+**Everything else.** Vendor, product, serial number and unique ID come from the
+Basic Information cluster; the name and area come from Home Assistant's device
+registry. `importer.py` turns each node into a row with `status=code_missing`.
+
+Such a row carries no discriminator, so the matcher cannot act on it and the
+trial rule will not touch it — inventory, not a pairing candidate. Its value is
+an asset list, names and areas preserved for the next rebuild, and a checklist
+of stickers to find. `set_entry_code` completes a row when its sticker turns up:
+the one place a code may be added after the fact, because the identity columns
+derived from it are all recomputed there.
+
 ## Deliberate limits of the MVP
 
 * One MatterBook per Home Assistant, one Matter fabric.

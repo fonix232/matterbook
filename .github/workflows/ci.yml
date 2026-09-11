@@ -1,0 +1,44 @@
+# Runs only in the split-out repository (see ../../SPLIT.md).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install tooling
+        run: pip install --disable-pip-version-check ruff==0.15.8 pytest
+
+      - run: ruff check .
+      - run: python -m pytest tests -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: panel/package-lock.json
+
+      - name: Build the panel
+        working-directory: panel
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+
+      - name: Check the committed panel bundle is current
+        run: |
+          if ! git diff --exit-code -- custom_components/matterbook/panel/; then
+            echo "::error::The committed panel bundle is stale. Run 'npm run build' in panel/ and commit the result."
+            exit 1
+          fi

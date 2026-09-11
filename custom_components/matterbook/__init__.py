@@ -26,13 +26,16 @@ from .const import (
     DEFAULT_LABEL_DIRNAME,
     DOMAIN,
     SERVICE_ADD_ENTRY,
+    SERVICE_IMPORT,
     SERVICE_PAIR,
     SERVICE_RELOAD_BOOK,
     SERVICE_REMOVE_ENTRY,
     SERVICE_SCAN,
+    SERVICE_SET_CODE,
 )
 from .coordinator import MatterBookCoordinator
 from .frontend import async_register_panel, async_unregister_panel
+from .matter_link import MatterUnavailable
 from .pairing_code import InvalidSetupCode
 from .store import MatterBookError
 from .websocket import async_register_commands
@@ -67,6 +70,10 @@ REMOVE_ENTRY_SCHEMA = vol.Schema(
         },
         cv.has_at_least_one_key(ATTR_ROW, ATTR_ENTRY_ID),
     )
+)
+
+SET_CODE_SCHEMA = vol.Schema(
+    {vol.Required(ATTR_ENTRY_ID): cv.string, vol.Required(ATTR_CODE): cv.string}
 )
 
 PAIR_SCHEMA = vol.Schema(
@@ -130,6 +137,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: MatterBookConfigEntry) 
             SERVICE_SCAN,
             SERVICE_PAIR,
             SERVICE_RELOAD_BOOK,
+            SERVICE_IMPORT,
+            SERVICE_SET_CODE,
         ):
             hass.services.async_remove(DOMAIN, service)
     return unloaded
@@ -222,6 +231,31 @@ def _async_register_services(hass: HomeAssistant) -> None:
             )
         return {"node_id": node_id, "entry_id": match.id}
 
+    async def async_import_from_matter(_call: ServiceCall) -> ServiceResponse:
+        """Snapshot the devices already commissioned onto this fabric.
+
+        Their setup codes cannot come along — a commissioned device does not hold
+        its passcode — so this produces rows that know what each device is and
+        where it lives, waiting for their stickers.
+        """
+        coordinator = _coordinator(hass)
+        try:
+            summary = await coordinator.async_import_from_matter()
+        except MatterUnavailable as err:
+            raise ServiceValidationError(str(err)) from err
+        return dict(summary)
+
+    async def async_set_code(call: ServiceCall) -> ServiceResponse:
+        """Give an imported entry its setup code."""
+        coordinator = _coordinator(hass)
+        try:
+            entry = await coordinator.async_set_code(call.data[ATTR_ENTRY_ID], call.data[ATTR_CODE])
+        except InvalidSetupCode as err:
+            raise ServiceValidationError(f"Not a Matter setup code: {err}") from err
+        except MatterBookError as err:
+            raise ServiceValidationError(str(err)) from err
+        return {"entry": entry.redacted()}
+
     async def async_reload_book(_call: ServiceCall) -> None:
         """Re-read the MatterBook file from disk."""
         await _coordinator(hass).async_load_book()
@@ -248,6 +282,19 @@ def _async_register_services(hass: HomeAssistant) -> None:
         SERVICE_PAIR,
         async_pair,
         schema=PAIR_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_IMPORT,
+        async_import_from_matter,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_CODE,
+        async_set_code,
+        schema=SET_CODE_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(DOMAIN, SERVICE_RELOAD_BOOK, async_reload_book)

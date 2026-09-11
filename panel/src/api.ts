@@ -74,3 +74,29 @@ export function pairEntry(
     ...(deviceKey ? { device_key: deviceKey } : {}),
   });
 }
+
+export interface ImportSummary {
+  found: number;
+  imported: number;
+  already_known: number;
+}
+
+/**
+ * Snapshot the devices already commissioned onto this fabric.
+ *
+ * Setup codes cannot be imported — a commissioned device keeps a PASE verifier,
+ * not its passcode — so the rows this creates are inventory waiting for their
+ * stickers to be found.
+ */
+export function importFromMatter(hass: HomeAssistant): Promise<ImportSummary> {
+  return hass.callWS<ImportSummary>({ type: "matterbook/import" });
+}
+
+/** Give an imported row its setup code. */
+export function setCode(
+  hass: HomeAssistant,
+  entryId: string,
+  code: string,
+): Promise<BookEntry> {
+  return hass.callWS<BookEntry>({ type: "matterbook/set_code", entry_id: entryId, code });
+}

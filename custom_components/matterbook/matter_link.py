@@ -177,6 +177,25 @@ async def async_commission(
             raise CommissioningFailed(str(err) or type(err).__name__) from err
 
 
+def async_get_nodes(hass: HomeAssistant) -> list[Any]:
+    """Return the nodes already commissioned onto Home Assistant's fabric.
+
+    This reads the Matter integration's live client, which holds the node list it
+    subscribed to at startup. A short-lived connection of our own would come back
+    empty — the node cache is filled by `start_listening`, which only the Matter
+    integration should be doing.
+
+    Raises:
+        MatterUnavailable: when the Matter integration is not loaded.
+    """
+    client = async_get_client(hass)
+    if client is None:
+        raise MatterUnavailable(
+            "The Matter integration is not loaded, so there is no fabric to import from"
+        )
+    return list(client.get_nodes())
+
+
 def async_ble_available(hass: HomeAssistant) -> bool:
     """Whether the Matter server can commission a device over BLE.
 

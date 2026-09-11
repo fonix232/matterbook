@@ -1,0 +1,33 @@
+# Runs only in the split-out repository (see ../../SPLIT.md): GitHub reads
+# workflows from a repository root, so this file is inert inside network-tools.
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # HACS and hassfest both tighten their rules over time, so a repository that
+    # passed at release can start failing without anything here changing.
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+jobs:
+  hassfest:
+    name: hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hacs/action@main
+        with:
+          category: integration
+          # Drop this once matterbook is accepted into home-assistant/brands;
+          # until then the brands check cannot pass for a new domain.
+          ignore: brands

@@ -52,6 +52,9 @@
       },
       "scan_now": {
         "name": "Scan now"
+      },
+      "import_from_matter": {
+        "name": "Import from Matter"
       }
     },
     "number": {
@@ -74,6 +77,9 @@
       },
       "last_paired": {
         "name": "Last paired"
+      },
+      "codes_missing": {
+        "name": "Entries without a code"
       }
     },
     "switch": {
@@ -161,6 +167,24 @@
     "reload_book": {
       "name": "Reload book",
       "description": "Re-reads the MatterBook file from disk, after editing it outside Home Assistant."
+    },
+    "import_from_matter": {
+      "name": "Import from Matter",
+      "description": "Adds every device already commissioned onto this fabric to the MatterBook. Their setup codes cannot be imported — a commissioned device keeps a verifier, not its passcode — so each row records what the device is and where it lives, and waits for its sticker."
+    },
+    "set_code": {
+      "name": "Set code",
+      "description": "Gives an imported entry its setup code, once you have found the sticker.",
+      "fields": {
+        "entry_id": {
+          "name": "Entry ID",
+          "description": "Stable id of the entry."
+        },
+        "code": {
+          "name": "Setup code",
+          "description": "The QR payload (MT:...), manual pairing code, or 8-digit passcode."
+        }
+      }
     }
   }
 }

@@ -1,5 +1,7 @@
 {
   "name": "MatterBook",
   "homeassistant": "2026.6.0",
-  "persistent_directory": "data"
+  "zip_release": true,
+  "filename": "matterbook.zip",
+  "hide_default_branch": true
 }

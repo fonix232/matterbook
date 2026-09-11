@@ -1,0 +1,61 @@
+# Runs only in the split-out repository (see ../../SPLIT.md).
+#
+# Publishes the archive HACS installs. The zip holds the *contents* of
+# custom_components/matterbook at its root, because HACS extracts it straight
+# into <config>/custom_components/matterbook/.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the manifest agrees with the tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          manifest=$(python3 -c "import json;print(json.load(open('custom_components/matterbook/manifest.json'))['version'])")
+          if [ "$manifest" != "$version" ]; then
+            echo "::error::manifest.json says $manifest but the tag says $version."
+            echo "::error::HACS reads the tag, Home Assistant reads the manifest; they must match."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: panel/package-lock.json
+
+      - name: Build the panel
+        working-directory: panel
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+
+      - name: Package the integration
+        run: |
+          cd custom_components/matterbook
+          find . -name '__pycache__' -type d -prune -exec rm -rf {} +
+          zip -r "${{ runner.temp }}/matterbook.zip" . -x '*.DS_Store'
+          unzip -l "${{ runner.temp }}/matterbook.zip" | grep -qE ' manifest\.json$' \
+            || { echo "::error::manifest.json is not at the archive root"; exit 1; }
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            "${{ runner.temp }}/matterbook.zip#matterbook.zip"

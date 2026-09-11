@@ -32,7 +32,16 @@ from .pairing_code import (
 STATUS_PENDING: Final = "pending"
 STATUS_PAIRED: Final = "paired"
 STATUS_FAILED: Final = "failed"
-ALL_STATUSES: Final = (STATUS_PENDING, STATUS_PAIRED, STATUS_FAILED)
+STATUS_CODE_MISSING: Final = "code_missing"
+"""Imported from a running fabric: the device is known, its setup code is not.
+
+A commissioned node cannot give its setup code back — the device stores a PASE
+verifier, not the passcode, and the controller discards the passcode after
+commissioning. Such a row is inventory plus a reminder to go and find the
+sticker; it cannot pair anything until a code is added to it.
+"""
+
+ALL_STATUSES: Final = (STATUS_PENDING, STATUS_PAIRED, STATUS_FAILED, STATUS_CODE_MISSING)
 
 
 class MatterBookError(Exception):
@@ -90,17 +99,23 @@ class MatterBookEntry:
 
     @property
     def is_pairable(self) -> bool:
-        """Whether auto-pairing should consider this row at all."""
-        return self.enabled and self.status != STATUS_PAIRED
+        """Whether auto-pairing should consider this row at all.
+
+        A row with no code is inventory, not something that can be commissioned.
+        """
+        return bool(self.code) and self.enabled and self.status != STATUS_PAIRED
 
     def redacted(self) -> dict[str, Any]:
         """Return the row without its secret, for UI attributes and diagnostics."""
         data = asdict(self)
         data["code"] = mask_code(self.code) if self.code else ""
-        try:
-            data["code_type"] = self.payload.kind
-        except InvalidSetupCode:
-            data["code_type"] = "invalid"
+        if not self.code:
+            data["code_type"] = "missing"
+        else:
+            try:
+                data["code_type"] = self.payload.kind
+            except InvalidSetupCode:
+                data["code_type"] = "invalid"
         data["identity_strength"] = self.identity_strength
         return data
 
@@ -136,6 +151,15 @@ def enrich_from_code(entry: MatterBookEntry) -> MatterBookEntry:
         entry.product_id = payload.product_id
     entry.code = payload.code
     return entry
+
+
+def _has_content(entry: MatterBookEntry) -> bool:
+    """Whether a row says anything at all.
+
+    A row with no code is fine — that is what an imported device looks like until
+    its sticker turns up — but a row with nothing in it is a blank line.
+    """
+    return bool(entry.code or entry.name or entry.serial_number or entry.node_id)
 
 
 def _parse_value(column: str, raw: str) -> Any:
@@ -187,7 +211,7 @@ def read_entries(path: Path) -> list[MatterBookEntry]:
             entry = MatterBookEntry(**values)
             if not entry.id:
                 entry.id = uuid.uuid4().hex[:12]
-            if not entry.code:
+            if not _has_content(entry):
                 continue
             entries.append(entry)
     return entries
@@ -250,6 +274,84 @@ def add_entry(
     if any(existing.code == entry.code for existing in entries):
         raise MatterBookError("That setup code is already in the MatterBook")
     entries.append(entry)
+    write_entries(path, entries)
+    return entry
+
+
+def add_imported_entry(
+    path: Path,
+    *,
+    node_id: int,
+    name: str = "",
+    area: str = "",
+    vendor_id: int | None = None,
+    product_id: int | None = None,
+    serial_number: str = "",
+    unique_id: str = "",
+) -> MatterBookEntry | None:
+    """Record a device that is already commissioned, with no code.
+
+    Returns the new row, or ``None`` if the device is already in the book —
+    matched on node id first, then on the identifiers that survive a
+    re-commissioning (unique ID, then serial number), so importing twice does not
+    duplicate rows and an import after a rebuild lands on the existing row.
+    """
+    entries = read_entries(path)
+    for existing in entries:
+        if existing.node_id == node_id:
+            return None
+        if unique_id and existing.unique_id == unique_id:
+            return None
+        if serial_number and existing.serial_number == serial_number:
+            return None
+
+    entry = MatterBookEntry(
+        name=name.strip(),
+        code="",
+        vendor_id=vendor_id,
+        product_id=product_id,
+        serial_number=serial_number.strip(),
+        unique_id=unique_id.strip(),
+        area=area.strip(),
+        status=STATUS_CODE_MISSING,
+        node_id=node_id,
+    )
+    entries.append(entry)
+    write_entries(path, entries)
+    return entry
+
+
+def set_entry_code(path: Path, entry_id: str, code: str) -> MatterBookEntry:
+    """Give an imported row its setup code, once the sticker turns up.
+
+    This is the one way a row's code may change: `update_entry` refuses, because
+    editing a code in place would silently invalidate the identity columns
+    derived from it. Here they are all recomputed.
+
+    Raises:
+        InvalidSetupCode: if the code is not a Matter onboarding payload.
+        MatterBookError: if the row does not exist, or already has a code.
+    """
+    entries = read_entries(path)
+    for entry in entries:
+        if entry.id == entry_id:
+            break
+    else:
+        raise MatterBookError(f"No MatterBook entry with id {entry_id}")
+
+    if entry.code:
+        raise MatterBookError(
+            "That entry already has a setup code; delete it and add it again to replace it"
+        )
+    if any(other.code == parse_setup_code(code).code for other in entries):
+        raise MatterBookError("That setup code is already in the MatterBook")
+
+    entry.code = code.strip()
+    # The identity columns are derived from the code, and the import filled some
+    # of them in from the node; the decoder must not overwrite those.
+    enrich_from_code(entry)
+    if entry.status == STATUS_CODE_MISSING:
+        entry.status = STATUS_PAIRED if entry.node_id is not None else STATUS_PENDING
     write_entries(path, entries)
     return entry
 

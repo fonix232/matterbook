@@ -27,20 +27,28 @@ rules keep it from pairing the wrong device, see [DESIGN.md](DESIGN.md).
 
 ## Installing
 
-Copy `custom_components/matterbook` into your Home Assistant `config/custom_components/`
-directory and restart:
+Download `matterbook.zip` from a `ha-matterbook-v*` release and unpack it into
+your Home Assistant configuration:
+
+```bash
+unzip matterbook.zip -d /config/custom_components/matterbook/
+```
+
+Or copy the directory straight out of this repository:
 
 ```bash
 scp -r custom_components/matterbook root@homeassistant:/config/custom_components/
 ```
 
-Then add **MatterBook** from *Settings → Devices & services → Add integration*.
+Either way, restart Home Assistant and add **MatterBook** from
+*Settings → Devices & services → Add integration*.
 
-> **HACS:** not yet. HACS reads a repository's newest release tag as the
-> version, and this monorepo publishes releases for its other components too, so
-> HACS would report nonsense here. The integration is laid out so it can be split
-> into its own repository (`git subtree split -P homeassistant/matterbook`) when
-> that matters; `hacs.json` is already in place for that move.
+> **HACS:** not from this repository. HACS reads a *repository's* newest release
+> tag as the version, and this monorepo also publishes Unraid and TrueNAS
+> releases, so HACS would offer one of those and then fail to find
+> `matterbook.zip` in it. Everything needed to publish MatterBook as its own
+> HACS repository — `hacs.json`, validation, CI and release workflows — is
+> already here and takes one command; see [SPLIT.md](SPLIT.md).
 
 ## Using it
 
@@ -51,6 +59,23 @@ more than one device. [PANEL.md](PANEL.md) describes it.
 
 The entities below do the same jobs without the panel, and are what automations
 should use.
+
+### Starting from an existing Matter setup
+
+If you already have devices commissioned, press **Import from Matter** (or call
+`matterbook.import_from_matter`). Every device on the fabric becomes a row that
+knows what it is, what it is called and which area it is in.
+
+Their **setup codes cannot be imported**. A commissioned device keeps a PASE
+verifier, not its passcode, and the controller discards the passcode once it is
+done — nothing on the fabric is holding it. `open_commissioning_window` mints a
+*temporary* code for sharing, but a factory-reset device goes back to the code
+printed on its label, so that is no substitute.
+
+What the import gives you is the other 90%: an inventory, names and areas
+preserved for the next rebuild, and a checklist — `sensor.matterbook_entries_without_a_code`
+— of the stickers still to be found. Add each code as it turns up, from the
+panel or with `matterbook.set_code`, and the row becomes fully pairable.
 
 ### Adding a device
 
@@ -86,16 +111,18 @@ deletion; automations should use the stable `entry_id` with the
 | --- | --- |
 | `sensor.matterbook_entries` | How many rows, with all of them (codes masked) as attributes |
 | `sensor.matterbook_pending_entries` | Rows still waiting for their device |
+| `sensor.matterbook_entries_without_a_code` | Imported devices whose sticker has not been found yet |
 | `sensor.matterbook_commissionable_devices` | What is in pairing mode right now, including devices no row claims |
 | `sensor.matterbook_last_scan` / `..._last_paired` | When |
 | `switch.matterbook_auto_pairing` | Whether a scan may actually pair. Off still scans and reports |
 | `button.matterbook_scan_now` | Scan without waiting for the next sweep |
+| `button.matterbook_import_from_matter` | Snapshot the devices already commissioned here |
 
 ### Actions
 
 `matterbook.add_entry`, `matterbook.remove_entry`, `matterbook.scan`,
-`matterbook.pair` and `matterbook.reload_book` — the last one after editing the
-CSV by hand.
+`matterbook.pair`, `matterbook.import_from_matter`, `matterbook.set_code` and
+`matterbook.reload_book` — the last one after editing the CSV by hand.
 
 ### Events
 

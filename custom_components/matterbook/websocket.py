@@ -20,6 +20,7 @@ from homeassistant.core import HomeAssistant, callback
 from .const import DOMAIN
 from .coordinator import MatterBookCoordinator
 from .matching import DiscoveredDevice
+from .matter_link import MatterUnavailable
 from .pairing_code import InvalidSetupCode
 from .store import MatterBookError
 
@@ -35,6 +36,8 @@ def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_update)
     websocket_api.async_register_command(hass, websocket_scan)
     websocket_api.async_register_command(hass, websocket_pair)
+    websocket_api.async_register_command(hass, websocket_import)
+    websocket_api.async_register_command(hass, websocket_set_code)
 
 
 @callback
@@ -284,3 +287,53 @@ async def websocket_pair(
 
     node_id = await coordinator.async_pair(entry, device)
     connection.send_result(msg["id"], {"node_id": node_id})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required(TYPE): "matterbook/import"})
+@websocket_api.async_response
+async def websocket_import(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Snapshot the devices already commissioned onto this fabric.
+
+    Their codes cannot come with them, so the rows this creates are inventory
+    waiting for their stickers.
+    """
+    coordinator = _require_coordinator(hass, connection, msg)
+    if coordinator is None:
+        return
+
+    try:
+        summary = await coordinator.async_import_from_matter()
+    except MatterUnavailable as err:
+        connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, str(err))
+        return
+
+    connection.send_result(msg["id"], summary)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required(TYPE): "matterbook/set_code",
+        vol.Required("entry_id"): str,
+        vol.Required("code"): str,
+    }
+)
+@websocket_api.async_response
+async def websocket_set_code(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Give an imported row its setup code, once its sticker turns up."""
+    coordinator = _require_coordinator(hass, connection, msg)
+    if coordinator is None:
+        return
+
+    try:
+        entry = await coordinator.async_set_code(msg["entry_id"], msg["code"])
+    except (InvalidSetupCode, MatterBookError) as err:
+        connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, str(err))
+        return
+
+    connection.send_result(msg["id"], entry.redacted())

@@ -18,7 +18,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import MatterBookCoordinator, MatterBookData
 from .entity import MatterBookEntity
-from .store import STATUS_FAILED
+from .store import STATUS_CODE_MISSING, STATUS_FAILED
 
 if TYPE_CHECKING:
     from . import MatterBookConfigEntry
@@ -55,7 +55,20 @@ SENSORS: tuple[MatterBookSensorDescription, ...] = (
         attributes_fn=lambda data: {
             "failed": [
                 entry.redacted() for entry in data.entries if entry.status == STATUS_FAILED
-            ]
+            ],
+            "code_missing": len(
+                [entry for entry in data.entries if entry.status == STATUS_CODE_MISSING]
+            ),
+        },
+    ),
+    MatterBookSensorDescription(
+        key="codes_missing",
+        translation_key="codes_missing",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda data: len([e for e in data.entries if not e.code]),
+        # The point of an import: a checklist of stickers still to be found.
+        attributes_fn=lambda data: {
+            "entries": [entry.redacted() for entry in data.entries if not entry.code]
         },
     ),
     MatterBookSensorDescription(

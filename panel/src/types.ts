@@ -27,9 +27,13 @@ export interface HomeAssistant {
 export type IdentityStrength = "exact" | "short" | "none";
 
 /** Which form the stored code takes. */
-export type CodeType = "qr" | "manual" | "passcode" | "invalid";
+export type CodeType = "qr" | "manual" | "passcode" | "invalid" | "missing";
 
-export type EntryStatus = "pending" | "paired" | "failed";
+/**
+ * `code_missing` is a row imported from the fabric: the device is known, its
+ * setup code is not, and it cannot pair anything until someone finds the sticker.
+ */
+export type EntryStatus = "pending" | "paired" | "failed" | "code_missing";
 
 /**
  * A row of the book as the panel sees it.

@@ -8,10 +8,11 @@
 import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 
-import { pairEntry, scan, subscribeMatterBook } from "./api";
+import { importFromMatter, pairEntry, scan, setCode, subscribeMatterBook } from "./api";
 import { sharedStyles } from "./styles";
 import type { BookEntry, DiscoveredDevice, HomeAssistant, MatterBookState } from "./types";
 import "./views/book-view";
+import type { SetCodeRequest } from "./views/book-view";
 import "./views/devices-view";
 import type { ResolveRequest } from "./views/devices-view";
 import "./views/resolve-view";
@@ -37,6 +38,7 @@ export class MatterBookPanel extends LitElement {
   @state() private _error?: string;
   @state() private _busy = false;
   @state() private _resolving?: ResolveRequest;
+  @state() private _notice?: string;
 
   private _unsubscribe?: () => Promise<void>;
 
@@ -70,6 +72,7 @@ export class MatterBookPanel extends LitElement {
     return html`
       <div class="content">
         ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
+        ${this._notice ? html`<div class="card">${this._notice}</div>` : nothing}
         ${this._resolving ? this._renderResolve() : this._renderMain()}
       </div>
     `;
@@ -89,7 +92,10 @@ export class MatterBookPanel extends LitElement {
 
       <div class="toolbar">
         <button ?disabled=${this._busy} @click=${this._scan}>
-          ${this._busy ? "Scanning…" : "Scan now"}
+          ${this._busy ? "Working…" : "Scan now"}
+        </button>
+        <button class="secondary" ?disabled=${this._busy} @click=${this._import}>
+          Import from Matter
         </button>
         <div class="spacer"></div>
         ${state ? this._renderStatus(state) : nothing}
@@ -98,7 +104,13 @@ export class MatterBookPanel extends LitElement {
       ${state === undefined
         ? html`<div class="card empty">Loading…</div>`
         : this._tab === "book"
-          ? html`<matterbook-book-view .entries=${state.entries}></matterbook-book-view>`
+          ? html`
+              <matterbook-book-view
+                .entries=${state.entries}
+                .busy=${this._busy}
+                @matterbook-set-code=${this._onSetCode}
+              ></matterbook-book-view>
+            `
           : html`
               <matterbook-devices-view
                 .state=${state}
@@ -156,6 +168,43 @@ export class MatterBookPanel extends LitElement {
       await scan(this.hass);
     } catch (err) {
       this._error = `Scan failed: ${errorText(err)}`;
+    } finally {
+      this._busy = false;
+    }
+  }
+
+  /**
+   * Snapshot the fabric into the book.
+   *
+   * The codes cannot come along, so what this produces is a list of devices
+   * waiting for their stickers — which is exactly the to-do list someone with an
+   * existing Matter setup needs.
+   */
+  private async _import(): Promise<void> {
+    this._busy = true;
+    this._error = undefined;
+    this._notice = undefined;
+    try {
+      const summary = await importFromMatter(this.hass);
+      this._notice =
+        `Found ${summary.found} commissioned devices: added ${summary.imported}, ` +
+        `${summary.already_known} already in the book. Their setup codes could not be ` +
+        `imported — a commissioned device does not keep its passcode — so add each ` +
+        `code from its sticker to make the row pairable.`;
+    } catch (err) {
+      this._error = `Import failed: ${errorText(err)}`;
+    } finally {
+      this._busy = false;
+    }
+  }
+
+  private async _onSetCode(event: CustomEvent<SetCodeRequest>): Promise<void> {
+    this._busy = true;
+    this._error = undefined;
+    try {
+      await setCode(this.hass, event.detail.entryId, event.detail.code);
+    } catch (err) {
+      this._error = `That code was not accepted: ${errorText(err)}`;
     } finally {
       this._busy = false;
     }

@@ -6,11 +6,13 @@ import logging
 from typing import TYPE_CHECKING
 
 from homeassistant.components.button import ButtonEntity
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .entity import MatterBookEntity
+from .matter_link import MatterUnavailable
 from .number import DELETE_ROW_KEY
 from .pairing_code import InvalidSetupCode
 from .store import MatterBookError
@@ -36,6 +38,7 @@ async def async_setup_entry(
             MatterBookAddEntryButton(coordinator),
             MatterBookDeleteEntryButton(coordinator),
             MatterBookScanButton(coordinator),
+            MatterBookImportButton(coordinator),
         ]
     )
 
@@ -90,6 +93,34 @@ class MatterBookDeleteEntryButton(MatterBookEntity, ButtonEntity):
         except MatterBookError as err:
             raise ServiceValidationError(str(err)) from err
         _LOGGER.info("Removed MatterBook row %s (%s)", row, removed.name or removed.id)
+
+
+class MatterBookImportButton(MatterBookEntity, ButtonEntity):
+    """Snapshot the devices already commissioned onto this fabric.
+
+    Their setup codes cannot come with them — a commissioned device keeps a PASE
+    verifier, not its passcode — so this fills the book with everything *except*
+    the codes, and leaves a list of stickers to go and find.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator: MatterBookCoordinator) -> None:
+        """Initialize the button."""
+        super().__init__(coordinator, "import_from_matter")
+
+    async def async_press(self) -> None:
+        """Run the import."""
+        try:
+            summary = await self.coordinator.async_import_from_matter()
+        except MatterUnavailable as err:
+            raise ServiceValidationError(str(err)) from err
+        _LOGGER.info(
+            "MatterBook import: %s devices found, %s added, %s already known",
+            summary["found"],
+            summary["imported"],
+            summary["already_known"],
+        )
 
 
 class MatterBookScanButton(MatterBookEntity, ButtonEntity):

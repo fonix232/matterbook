@@ -8,14 +8,17 @@ import pytest
 
 from matterbook.pairing_code import InvalidSetupCode
 from matterbook.store import (
+    STATUS_CODE_MISSING,
     STATUS_PAIRED,
     MatterBookError,
     add_entry,
+    add_imported_entry,
     mark_failed,
     mark_paired,
     mark_trial_used,
     read_entries,
     remove_entry,
+    set_entry_code,
     update_entry,
     write_entries,
 )
@@ -161,9 +164,22 @@ def test_unknown_and_missing_columns_are_tolerated(tmp_path: Path) -> None:
     assert entry.attempt_count == 0
 
 
-def test_rows_without_a_code_are_skipped(tmp_path: Path) -> None:
+def test_a_row_without_a_code_is_inventory_not_junk(tmp_path: Path) -> None:
+    # This is what an imported device looks like until its sticker turns up.
     path = tmp_path / "matterbook.csv"
-    path.write_text("id,name,code\nabc,Lamp,\n", encoding="utf-8")
+    path.write_text("id,name,code,status\nabc,Lamp,,code_missing\n", encoding="utf-8")
+    (entry,) = read_entries(path)
+    assert entry.name == "Lamp"
+    assert entry.code == ""
+    # It cannot pair anything: there is no code to pair with.
+    assert entry.is_pairable is False
+    assert entry.identity_strength == "none"
+    assert entry.redacted()["code_type"] == "missing"
+
+
+def test_rows_with_nothing_in_them_are_skipped(tmp_path: Path) -> None:
+    path = tmp_path / "matterbook.csv"
+    path.write_text("id,name,code\nabc,,\n", encoding="utf-8")
     assert read_entries(path) == []
 
 
@@ -230,3 +246,88 @@ def test_identity_strength_of_each_code_form(tmp_path: Path) -> None:
     assert add_entry(path, QR).identity_strength == "exact"
     assert add_entry(path, MANUAL).identity_strength == "short"
     assert add_entry(path, "20202021").identity_strength == "none"
+
+
+def test_importing_a_commissioned_device_makes_a_codeless_row(tmp_path: Path) -> None:
+    path = tmp_path / "matterbook.csv"
+    entry = add_imported_entry(
+        path,
+        node_id=12,
+        name="Hall lamp",
+        area="Hall",
+        vendor_id=65521,
+        product_id=32768,
+        serial_number="SN-1",
+        unique_id="UID-1",
+    )
+    assert entry is not None
+    assert entry.status == STATUS_CODE_MISSING
+    assert entry.code == ""
+    assert entry.node_id == 12
+    # It knows what the device is, but not which code opens it, so it must never
+    # be a pairing candidate.
+    assert entry.vendor_id == 65521
+    assert entry.is_pairable is False
+
+    (stored,) = read_entries(path)
+    assert stored.name == "Hall lamp"
+    assert stored.area == "Hall"
+    assert stored.status == STATUS_CODE_MISSING
+
+
+def test_importing_twice_does_not_duplicate(tmp_path: Path) -> None:
+    path = tmp_path / "matterbook.csv"
+    assert add_imported_entry(path, node_id=12, unique_id="UID-1") is not None
+    assert add_imported_entry(path, node_id=12, unique_id="UID-1") is None
+    assert len(read_entries(path)) == 1
+
+
+def test_import_matches_an_existing_row_by_identity_not_just_node_id(tmp_path: Path) -> None:
+    # After a controller rebuild the same device comes back with a different node
+    # id; the serial number and unique ID are what survive.
+    path = tmp_path / "matterbook.csv"
+    add_imported_entry(path, node_id=12, serial_number="SN-1")
+    assert add_imported_entry(path, node_id=99, serial_number="SN-1") is None
+    assert len(read_entries(path)) == 1
+
+
+def test_set_entry_code_completes_an_imported_row(tmp_path: Path) -> None:
+    path = tmp_path / "matterbook.csv"
+    imported = add_imported_entry(path, node_id=12, name="Hall lamp", serial_number="SN-1")
+    assert imported is not None
+
+    entry = set_entry_code(path, imported.id, QR)
+    assert entry.code == QR
+    assert entry.discriminator == 3840
+    assert entry.short_discriminator == 15
+    # It was already commissioned, so it stays paired rather than becoming pending.
+    assert entry.status == STATUS_PAIRED
+    # The import's own identity survives the decode.
+    assert entry.serial_number == "SN-1"
+    assert entry.name == "Hall lamp"
+
+
+def test_set_entry_code_rejects_bad_and_duplicate_codes(tmp_path: Path) -> None:
+    path = tmp_path / "matterbook.csv"
+    imported = add_imported_entry(path, node_id=12)
+    assert imported is not None
+
+    with pytest.raises(InvalidSetupCode):
+        set_entry_code(path, imported.id, "nonsense")
+
+    add_entry(path, QR)
+    with pytest.raises(MatterBookError):
+        set_entry_code(path, imported.id, QR)
+
+
+def test_set_entry_code_refuses_to_overwrite_a_code(tmp_path: Path) -> None:
+    path = tmp_path / "matterbook.csv"
+    entry = add_entry(path, QR)
+    with pytest.raises(MatterBookError):
+        set_entry_code(path, entry.id, MANUAL)
+
+
+def test_set_entry_code_needs_a_real_entry(tmp_path: Path) -> None:
+    path = tmp_path / "matterbook.csv"
+    with pytest.raises(MatterBookError):
+        set_entry_code(path, "nope", QR)

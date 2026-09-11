@@ -41,6 +41,8 @@ SERVICE_REMOVE_ENTRY: Final = "remove_entry"
 SERVICE_SCAN: Final = "scan"
 SERVICE_PAIR: Final = "pair"
 SERVICE_RELOAD_BOOK: Final = "reload_book"
+SERVICE_IMPORT: Final = "import_from_matter"
+SERVICE_SET_CODE: Final = "set_code"
 
 ATTR_CODE: Final = "code"
 ATTR_NAME: Final = "name"
@@ -55,6 +57,7 @@ EVENT_PAIRED: Final = f"{DOMAIN}_paired"
 EVENT_PAIR_FAILED: Final = f"{DOMAIN}_pair_failed"
 EVENT_AMBIGUOUS: Final = f"{DOMAIN}_ambiguous_match"
 EVENT_TRIAL: Final = f"{DOMAIN}_trial_pairing"
+EVENT_IMPORTED: Final = f"{DOMAIN}_imported"
 
 # 16-bit Matter service UUID, in the 128-bit form Home Assistant's bluetooth
 # component reports. Commissionable devices put their discriminator, vendor and
