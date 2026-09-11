@@ -1,8 +1,12 @@
 # Publishing MatterBook as a HACS repository
 
-Everything in this directory is arranged so it can become a standalone
-repository with one command. This document says why that step exists, and what
-to do when you take it.
+**The repository exists: [fonix232/matterbook](https://github.com/fonix232/matterbook).**
+It was created by the split described below, and the steps here are now the
+recurring procedure for publishing changes to it.
+
+Everything in this directory is arranged so it can become that standalone
+repository with one command. This document says why the step exists, and how to
+repeat it.
 
 ## Why it cannot be installed from this monorepo
 
@@ -25,10 +29,11 @@ So: develop here, publish from a repository of its own.
 ```bash
 # From the root of network-tools, on an up-to-date main:
 git subtree split --prefix=homeassistant/matterbook -b matterbook-export
-
-# Create an empty GitHub repository (no README, no licence), then:
 git push git@github.com:fonix232/matterbook.git matterbook-export:main
 ```
+
+The target repository must be created empty (no README, no licence) — anything
+committed there first makes the push a non-fast-forward.
 
 It has to be its own repository rather than a directory in `fonix232/hacs-repo`:
 HACS resolves an integration with `get_first_directory_in_directory(tree,

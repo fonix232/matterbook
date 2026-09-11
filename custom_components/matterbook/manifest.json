@@ -5,6 +5,12 @@
     "@fonix232"
   ],
   "config_flow": true,
+  "dependencies": [
+    "http",
+    "websocket_api",
+    "frontend",
+    "panel_custom"
+  ],
   "after_dependencies": [
     "matter",
     "bluetooth"
