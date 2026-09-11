@@ -55,7 +55,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes \
-            "${{ runner.temp }}/matterbook.zip#matterbook.zip"
+          # A tag can arrive two ways: pushed from a clone, which fires this
+          # workflow with no release yet, or created by "Draft a new release" in
+          # the UI, which publishes the release first. Handle both, or the
+          # second case fails with "release already exists" and ships no archive.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME exists; attaching the archive to it."
+            gh release upload "$GITHUB_REF_NAME" \
+              "${{ runner.temp }}/matterbook.zip#matterbook.zip" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes \
+              "${{ runner.temp }}/matterbook.zip#matterbook.zip"
+          fi
+
+      - name: Confirm the archive is attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # HACS downloads this asset by name; a release without it installs
+          # nothing, and the workflow would otherwise have exited green.
+          gh release view "$GITHUB_REF_NAME" --json assets \
+            --jq '.assets[].name' | grep -qx 'matterbook.zip'

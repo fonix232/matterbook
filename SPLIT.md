@@ -73,6 +73,12 @@ directory *is* the root.
    git tag v0.1.0 && git push origin v0.1.0
    ```
 
+   Or from GitHub: *Releases → Draft a new release → Choose a tag → Create new
+   tag on publish*, targeting `main`. `release.yml` copes with both — a pushed
+   tag has no release yet so it creates one, and a release drafted in the UI
+   already exists so it attaches the archive to it. Either way the run fails if
+   `matterbook.zip` is not on the release at the end.
+
    `release.yml` refuses to publish if the tag and the manifest disagree —
    HACS reads the tag and Home Assistant reads the manifest, so a mismatch means
    an install that reports the wrong version forever.
