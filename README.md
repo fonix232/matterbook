@@ -112,12 +112,16 @@ automation:
 
 ## The book
 
-A CSV, by default `config/matterbook.csv`, written atomically and `0600`:
+A CSV, by default `config/matterbook/database.csv`, written atomically and `0600`:
 
 ```csv
 id,name,code,vendor_id,product_id,discriminator,short_discriminator,serial_number,unique_id,area,notes,enabled,status,node_id,paired_at,last_attempt_at,attempt_count,trial_used,last_error
 a1b2c3d4e5f6,Kitchen ceiling,MT:Y.K9042C00KA0648G00,65521,32768,3840,15,,,Kitchen,behind the trim,true,paired,12,2026-09-11T09:14:02+00:00,2026-09-11T09:14:02+00:00,0,false,
 ```
+
+Scanned label images will live beside it in `config/matterbook/labels/`, so the
+whole archive — book and stickers — moves, backs up or gets excluded as one
+directory.
 
 Edit it outside Home Assistant if you like — then call
 `matterbook.reload_book`. Unknown columns are ignored and missing ones take

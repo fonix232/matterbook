@@ -23,6 +23,7 @@ from .const import (
     ATTR_SERIAL_NUMBER,
     CONF_CSV_PATH,
     DEFAULT_CSV_FILENAME,
+    DEFAULT_LABEL_DIRNAME,
     DOMAIN,
     SERVICE_ADD_ENTRY,
     SERVICE_PAIR,
@@ -85,10 +86,15 @@ def resolve_csv_path(hass: HomeAssistant, configured: str | None) -> Path:
     return Path(hass.config.path(str(candidate)))
 
 
+def resolve_label_dir(csv_path: Path) -> Path:
+    """Return the directory for label images, alongside the book itself."""
+    return csv_path.parent / DEFAULT_LABEL_DIRNAME
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: MatterBookConfigEntry) -> bool:
     """Set up MatterBook from a config entry."""
     csv_path = resolve_csv_path(hass, entry.data.get(CONF_CSV_PATH))
-    coordinator = MatterBookCoordinator(hass, entry, csv_path)
+    coordinator = MatterBookCoordinator(hass, entry, csv_path, resolve_label_dir(csv_path))
     entry.runtime_data = coordinator
 
     await coordinator.async_load_book()

@@ -99,7 +99,9 @@ class MatterBookData:
 class MatterBookCoordinator(DataUpdateCoordinator[MatterBookData]):
     """Scans for commissionable devices and pairs the ones the book knows."""
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, csv_path: Path) -> None:
+    def __init__(
+        self, hass: HomeAssistant, entry: ConfigEntry, csv_path: Path, label_dir: Path
+    ) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
@@ -111,6 +113,8 @@ class MatterBookCoordinator(DataUpdateCoordinator[MatterBookData]):
             ),
         )
         self.csv_path = csv_path
+        self.label_dir = label_dir
+        """Where scanned label images live, alongside the book."""
         self.data = MatterBookData()
         self.staging: dict[str, str] = {}
         """What the text entities hold for the next row, and the delete row number."""

@@ -7,7 +7,11 @@ from typing import Final
 DOMAIN: Final = "matterbook"
 MATTER_DOMAIN: Final = "matter"
 
-DEFAULT_CSV_FILENAME: Final = "matterbook.csv"
+# The book and its label images share one directory, so the whole archive can be
+# backed up, moved or excluded as a unit.
+DEFAULT_DATA_DIR: Final = "matterbook"
+DEFAULT_CSV_FILENAME: Final = f"{DEFAULT_DATA_DIR}/database.csv"
+DEFAULT_LABEL_DIRNAME: Final = "labels"
 
 CONF_CSV_PATH: Final = "csv_path"
 CONF_SCAN_INTERVAL: Final = "scan_interval"

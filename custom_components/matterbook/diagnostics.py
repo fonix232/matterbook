@@ -27,6 +27,7 @@ async def async_get_config_entry_diagnostics(
     return {
         "options": dict(entry.options),
         "csv_path": str(coordinator.csv_path),
+        "label_dir": str(coordinator.label_dir),
         "auto_pair_enabled": coordinator.auto_pair_enabled,
         "matter": {
             "client_available": matter_link.async_get_client(hass) is not None,
