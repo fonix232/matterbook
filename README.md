@@ -44,6 +44,14 @@ Then add **MatterBook** from *Settings → Devices & services → Add integratio
 
 ## Using it
 
+Once set up, **MatterBook** appears in the sidebar (admin users only — the panel
+lists setup codes and can commission devices). It shows the book, what is
+currently in pairing mode, and the screen for resolving a code that could mean
+more than one device. [PANEL.md](PANEL.md) describes it.
+
+The entities below do the same jobs without the panel, and are what automations
+should use.
+
 ### Adding a device
 
 Fill in the text fields and press **Add entry**:
@@ -166,3 +174,17 @@ python -m pytest tests -q
 `pairing_code.py`, `store.py`, `matching.py` and `advertisement.py` import
 nothing from Home Assistant and are tested directly; the rest is the Home
 Assistant wiring.
+
+The sidebar panel is TypeScript, built with esbuild into a single ES module the
+integration serves as a static file:
+
+```bash
+cd panel
+npm ci
+npm run check      # typecheck and build
+npm run dev        # unminified, rebuild on save
+```
+
+The built bundle at `custom_components/matterbook/panel/matterbook-panel.js` is
+committed — installers have Home Assistant, not Node — and CI fails if it is
+stale. See [panel/README.md](panel/README.md).

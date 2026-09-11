@@ -63,6 +63,7 @@ from .store import (
     mark_trial_used,
     read_entries,
     remove_entry,
+    update_entry,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -165,6 +166,14 @@ class MatterBookCoordinator(DataUpdateCoordinator[MatterBookData]):
             self.config_entry.async_create_background_task(
                 self.hass, self.async_scan(), name=f"{DOMAIN}_pair_on_add"
             )
+        return entry
+
+    async def async_update_entry(self, entry_id: str, **changes: Any) -> MatterBookEntry:
+        """Edit one row's description, then re-read the book."""
+        entry = await self.hass.async_add_executor_job(
+            partial(update_entry, self.csv_path, entry_id, **changes)
+        )
+        await self.async_load_book()
         return entry
 
     async def async_remove_entry(

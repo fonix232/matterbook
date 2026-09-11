@@ -32,8 +32,10 @@ from .const import (
     SERVICE_SCAN,
 )
 from .coordinator import MatterBookCoordinator
+from .frontend import async_register_panel, async_unregister_panel
 from .pairing_code import InvalidSetupCode
 from .store import MatterBookError
+from .websocket import async_register_commands
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -102,6 +104,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: MatterBookConfigEntry) -
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _async_register_services(hass)
+    async_register_commands(hass)
+    await async_register_panel(hass, csv_path)
 
     # The first scan runs in the background: discovery waits on the Matter server
     # and on BLE, and neither should hold up Home Assistant's startup. Later scans
@@ -117,6 +121,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: MatterBookConfigEntry) 
     """Unload a config entry."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded and len(hass.config_entries.async_entries(DOMAIN)) == 1:
+        # Registering a panel that already exists raises, so a reload has to take
+        # the old one down first.
+        async_unregister_panel(hass)
         for service in (
             SERVICE_ADD_ENTRY,
             SERVICE_REMOVE_ENTRY,
