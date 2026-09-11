@@ -1,0 +1,108 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "MatterBook",
+        "description": "MatterBook keeps your Matter setup codes in a CSV file and commissions the devices it recognises when they turn up in pairing mode.\n\nThe file holds device passcodes, so treat it like secrets.yaml.",
+        "data": {
+          "csv_path": "MatterBook file"
+        },
+        "data_description": {
+          "csv_path": "Relative paths are resolved inside your Home Assistant configuration directory."
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "MatterBook is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "MatterBook options",
+        "data": {
+          "scan_interval": "Scan interval",
+          "auto_pair": "Pair known devices automatically",
+          "require_exact_match": "Only pair on an exact discriminator match",
+          "use_bluetooth": "Also scan Home Assistant's Bluetooth advertisements",
+          "apply_metadata": "Apply the stored name and area after pairing",
+          "pair_timeout": "Commissioning timeout",
+          "max_attempts": "Attempts before giving up on an entry",
+          "retry_cooldown": "Cooldown after a failed attempt"
+        },
+        "data_description": {
+          "require_exact_match": "A manual pairing code only carries 4 bits of discriminator, so one in sixteen devices matches by chance. Turn this on to act only on entries stored as a scanned QR payload.",
+          "use_bluetooth": "Reads advertisements Home Assistant already collects, including those relayed by ESPHome Bluetooth proxies.",
+          "retry_cooldown": "Doubles with every failed attempt, up to eight times this value."
+        }
+      }
+    }
+  },
+  "entity": {
+    "button": {
+      "add_entry": { "name": "Add entry" },
+      "delete_entry": { "name": "Delete entry" },
+      "scan_now": { "name": "Scan now" }
+    },
+    "number": {
+      "delete_row": { "name": "Row to delete" }
+    },
+    "sensor": {
+      "entries": { "name": "Entries" },
+      "pending": { "name": "Pending entries" },
+      "discovered": { "name": "Commissionable devices" },
+      "last_scan": { "name": "Last scan" },
+      "last_paired": { "name": "Last paired" }
+    },
+    "switch": {
+      "auto_pairing": { "name": "Auto pairing" }
+    },
+    "text": {
+      "new_entry_code": { "name": "New entry setup code" },
+      "new_entry_name": { "name": "New entry name" },
+      "new_entry_area": { "name": "New entry area" },
+      "new_entry_notes": { "name": "New entry notes" },
+      "new_entry_serial_number": { "name": "New entry serial number" }
+    }
+  },
+  "services": {
+    "add_entry": {
+      "name": "Add entry",
+      "description": "Adds a device to the MatterBook.",
+      "fields": {
+        "code": {
+          "name": "Setup code",
+          "description": "The QR payload (MT:...) or the 11- or 21-digit manual pairing code."
+        },
+        "name": { "name": "Name", "description": "Name to give the device once it is paired." },
+        "area": { "name": "Area", "description": "Area to put the device in once it is paired." },
+        "notes": { "name": "Notes", "description": "Free-form note, such as where the device is." },
+        "serial_number": { "name": "Serial number", "description": "Serial number, for your own records." }
+      }
+    },
+    "remove_entry": {
+      "name": "Remove entry",
+      "description": "Removes a device from the MatterBook.",
+      "fields": {
+        "row": { "name": "Row", "description": "1-based row number, as shown on the Entries sensor." },
+        "entry_id": { "name": "Entry ID", "description": "Stable id of the entry, which does not shift when other rows are deleted." }
+      }
+    },
+    "scan": {
+      "name": "Scan",
+      "description": "Scans for commissionable Matter devices and pairs the ones the book knows, if auto-pairing is on."
+    },
+    "pair": {
+      "name": "Pair",
+      "description": "Commissions one MatterBook entry now, whether or not it was seen in a scan.",
+      "fields": {
+        "row": { "name": "Row", "description": "1-based row number, as shown on the Entries sensor." },
+        "entry_id": { "name": "Entry ID", "description": "Stable id of the entry." }
+      }
+    },
+    "reload_book": {
+      "name": "Reload book",
+      "description": "Re-reads the MatterBook file from disk, after editing it outside Home Assistant."
+    }
+  }
+}

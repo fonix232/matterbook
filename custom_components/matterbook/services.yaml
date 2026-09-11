@@ -1,0 +1,52 @@
+add_entry:
+  fields:
+    code:
+      required: true
+      example: "MT:Y.K9042C00KA0648G00"
+      selector:
+        text:
+    name:
+      example: "Kitchen ceiling light"
+      selector:
+        text:
+    area:
+      example: "Kitchen"
+      selector:
+        text:
+    notes:
+      selector:
+        text:
+          multiline: true
+    serial_number:
+      selector:
+        text:
+
+remove_entry:
+  fields:
+    row:
+      selector:
+        number:
+          min: 1
+          max: 9999
+          step: 1
+          mode: box
+    entry_id:
+      selector:
+        text:
+
+scan:
+
+pair:
+  fields:
+    row:
+      selector:
+        number:
+          min: 1
+          max: 9999
+          step: 1
+          mode: box
+    entry_id:
+      selector:
+        text:
+
+reload_book:

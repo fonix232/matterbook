@@ -1,0 +1,240 @@
+"""MatterBook: a book of Matter setup codes, and auto-commissioning from it."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+import voluptuous as vol
+
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import config_validation as cv
+
+from .const import (
+    ATTR_AREA,
+    ATTR_CODE,
+    ATTR_ENTRY_ID,
+    ATTR_NAME,
+    ATTR_NOTES,
+    ATTR_ROW,
+    ATTR_SERIAL_NUMBER,
+    CONF_CSV_PATH,
+    DEFAULT_CSV_FILENAME,
+    DOMAIN,
+    SERVICE_ADD_ENTRY,
+    SERVICE_PAIR,
+    SERVICE_RELOAD_BOOK,
+    SERVICE_REMOVE_ENTRY,
+    SERVICE_SCAN,
+)
+from .coordinator import MatterBookCoordinator
+from .pairing_code import InvalidSetupCode
+from .store import MatterBookError
+
+_LOGGER = logging.getLogger(__name__)
+
+PLATFORMS: list[Platform] = [
+    Platform.BUTTON,
+    Platform.NUMBER,
+    Platform.SENSOR,
+    Platform.SWITCH,
+    Platform.TEXT,
+]
+
+type MatterBookConfigEntry = ConfigEntry[MatterBookCoordinator]
+
+ADD_ENTRY_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_CODE): cv.string,
+        vol.Optional(ATTR_NAME, default=""): cv.string,
+        vol.Optional(ATTR_AREA, default=""): cv.string,
+        vol.Optional(ATTR_NOTES, default=""): cv.string,
+        vol.Optional(ATTR_SERIAL_NUMBER, default=""): cv.string,
+    }
+)
+
+REMOVE_ENTRY_SCHEMA = vol.Schema(
+    vol.All(
+        {
+            vol.Optional(ATTR_ROW): vol.All(vol.Coerce(int), vol.Range(min=1)),
+            vol.Optional(ATTR_ENTRY_ID): cv.string,
+        },
+        cv.has_at_least_one_key(ATTR_ROW, ATTR_ENTRY_ID),
+    )
+)
+
+PAIR_SCHEMA = vol.Schema(
+    vol.All(
+        {
+            vol.Optional(ATTR_ROW): vol.All(vol.Coerce(int), vol.Range(min=1)),
+            vol.Optional(ATTR_ENTRY_ID): cv.string,
+        },
+        cv.has_at_least_one_key(ATTR_ROW, ATTR_ENTRY_ID),
+    )
+)
+
+
+def resolve_csv_path(hass: HomeAssistant, configured: str | None) -> Path:
+    """Return the MatterBook path, relative paths resolving inside the config dir."""
+    candidate = Path(configured or DEFAULT_CSV_FILENAME)
+    if candidate.is_absolute():
+        return candidate
+    return Path(hass.config.path(str(candidate)))
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: MatterBookConfigEntry) -> bool:
+    """Set up MatterBook from a config entry."""
+    csv_path = resolve_csv_path(hass, entry.data.get(CONF_CSV_PATH))
+    coordinator = MatterBookCoordinator(hass, entry, csv_path)
+    entry.runtime_data = coordinator
+
+    await coordinator.async_load_book()
+    _LOGGER.debug("MatterBook loaded %s entries from %s", len(coordinator.data.entries), csv_path)
+
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _async_register_services(hass)
+
+    # The first scan runs in the background: discovery waits on the Matter server
+    # and on BLE, and neither should hold up Home Assistant's startup. Later scans
+    # are scheduled by the coordinator itself, once the entities are listening.
+    entry.async_create_background_task(
+        hass, coordinator.async_refresh(), name=f"{DOMAIN}_first_refresh"
+    )
+    entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
+    return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: MatterBookConfigEntry) -> bool:
+    """Unload a config entry."""
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded and len(hass.config_entries.async_entries(DOMAIN)) == 1:
+        for service in (
+            SERVICE_ADD_ENTRY,
+            SERVICE_REMOVE_ENTRY,
+            SERVICE_SCAN,
+            SERVICE_PAIR,
+            SERVICE_RELOAD_BOOK,
+        ):
+            hass.services.async_remove(DOMAIN, service)
+    return unloaded
+
+
+async def _async_reload_entry(hass: HomeAssistant, entry: MatterBookConfigEntry) -> None:
+    """Reload when the options change, so a new scan interval takes effect."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
+def _coordinator(hass: HomeAssistant) -> MatterBookCoordinator:
+    """Return the single MatterBook coordinator."""
+    entries: list[MatterBookConfigEntry] = hass.config_entries.async_loaded_entries(DOMAIN)
+    if not entries:
+        raise ServiceValidationError("MatterBook is not set up")
+    return entries[0].runtime_data
+
+
+def _async_register_services(hass: HomeAssistant) -> None:
+    """Register the MatterBook actions, once for all config entries."""
+    if hass.services.has_service(DOMAIN, SERVICE_ADD_ENTRY):
+        return
+
+    async def async_add_entry(call: ServiceCall) -> ServiceResponse:
+        """Add a row to the MatterBook."""
+        coordinator = _coordinator(hass)
+        try:
+            entry = await coordinator.async_add_entry(
+                code=call.data[ATTR_CODE],
+                name=call.data.get(ATTR_NAME, ""),
+                area=call.data.get(ATTR_AREA, ""),
+                notes=call.data.get(ATTR_NOTES, ""),
+                serial_number=call.data.get(ATTR_SERIAL_NUMBER, ""),
+            )
+        except InvalidSetupCode as err:
+            raise ServiceValidationError(f"Not a Matter setup code: {err}") from err
+        except MatterBookError as err:
+            raise ServiceValidationError(str(err)) from err
+        return {"entry": entry.redacted()}
+
+    async def async_remove_entry(call: ServiceCall) -> ServiceResponse:
+        """Remove a row from the MatterBook."""
+        coordinator = _coordinator(hass)
+        try:
+            removed = await coordinator.async_remove_entry(
+                row=call.data.get(ATTR_ROW), entry_id=call.data.get(ATTR_ENTRY_ID)
+            )
+        except MatterBookError as err:
+            raise ServiceValidationError(str(err)) from err
+        return {"entry": removed.redacted()}
+
+    async def async_scan(call: ServiceCall) -> ServiceResponse:
+        """Scan for commissionable devices and pair what the book knows."""
+        coordinator = _coordinator(hass)
+        data = await coordinator.async_scan()
+        return {
+            "discovered": [device.describe() for device in data.discovered],
+            "matched": [
+                {"entry_id": match.entry.id, "name": match.entry.name, "device": match.device.key}
+                for match in data.report.matches
+            ],
+            "ambiguous": [
+                {"entry_id": match.entry.id, "device": match.device.key}
+                for match in data.report.ambiguous
+            ],
+        }
+
+    async def async_pair(call: ServiceCall) -> ServiceResponse:
+        """Commission one specific row now, whether or not it was seen in a scan."""
+        coordinator = _coordinator(hass)
+        entries = await coordinator.async_load_book()
+        entry_id = call.data.get(ATTR_ENTRY_ID)
+        row = call.data.get(ATTR_ROW)
+
+        if entry_id is not None:
+            match = next((item for item in entries if item.id == entry_id), None)
+            if match is None:
+                raise ServiceValidationError(f"No MatterBook entry with id {entry_id}")
+        else:
+            if not 1 <= row <= len(entries):
+                raise ServiceValidationError(
+                    f"Row {row} is out of range (the book has {len(entries)} rows)"
+                )
+            match = entries[row - 1]
+
+        node_id = await coordinator.async_pair(match)
+        if node_id is None:
+            raise HomeAssistantError(
+                f"Commissioning {match.name or match.id} failed; see the log for the reason"
+            )
+        return {"node_id": node_id, "entry_id": match.id}
+
+    async def async_reload_book(_call: ServiceCall) -> None:
+        """Re-read the MatterBook file from disk."""
+        await _coordinator(hass).async_load_book()
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ADD_ENTRY,
+        async_add_entry,
+        schema=ADD_ENTRY_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_REMOVE_ENTRY,
+        async_remove_entry,
+        schema=REMOVE_ENTRY_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SCAN, async_scan, supports_response=SupportsResponse.OPTIONAL
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PAIR,
+        async_pair,
+        schema=PAIR_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(DOMAIN, SERVICE_RELOAD_BOOK, async_reload_book)

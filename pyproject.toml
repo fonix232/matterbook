@@ -1,0 +1,35 @@
+[tool.ruff]
+# Home Assistant 2026.x runs on Python 3.13.
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "F",   # pyflakes
+  "W",   # pycodestyle warnings
+  "I",   # isort
+  "UP",  # pyupgrade
+  "B",   # bugbear
+  "SIM", # simplify
+  "D",   # pydocstyle: Home Assistant requires docstrings
+  "RUF",
+]
+ignore = [
+  "D203", # incompatible with D211
+  "D213", # incompatible with D212
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D103", "D100"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+known-first-party = ["homeassistant", "matterbook"]
+combine-as-imports = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
