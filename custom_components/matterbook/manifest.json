@@ -1,13 +1,18 @@
 {
   "domain": "matterbook",
   "name": "MatterBook",
-  "codeowners": ["@fonix232"],
+  "codeowners": [
+    "@fonix232"
+  ],
   "config_flow": true,
-  "after_dependencies": ["matter", "bluetooth"],
-  "documentation": "https://github.com/fonix232/network-tools/tree/main/homeassistant/matterbook",
+  "after_dependencies": [
+    "matter",
+    "bluetooth"
+  ],
+  "documentation": "https://github.com/fonix232/matterbook",
   "integration_type": "service",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/fonix232/network-tools/issues",
+  "issue_tracker": "https://github.com/fonix232/matterbook/issues",
   "requirements": [],
   "version": "0.1.0"
 }

@@ -30,6 +30,12 @@ git subtree split --prefix=homeassistant/matterbook -b matterbook-export
 git push git@github.com:fonix232/matterbook.git matterbook-export:main
 ```
 
+It has to be its own repository rather than a directory in `fonix232/hacs-repo`:
+HACS resolves an integration with `get_first_directory_in_directory(tree,
+"custom_components")`, which takes the **first** directory it finds and stops.
+Two integrations in one repository means HACS serves whichever sorts first and
+silently ignores the other — which would have taken Renovate Updates' place.
+
 `git subtree split` rewrites only this directory's history, with these files at
 the repository root — which is exactly the layout HACS requires:
 
@@ -68,6 +74,10 @@ directory *is* the root.
 
 4. **Install.** In HACS: *Custom repositories* → the repository URL, category
    *Integration*. Users then get updates through HACS like any other.
+
+   Note that `hacs.json` sets `zip_release` **and** `hide_default_branch`, so
+   HACS offers nothing at all until the first release exists. Cut `v0.1.0`
+   before telling anyone the repository is there.
 
 ## Keeping the two in step
 

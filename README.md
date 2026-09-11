@@ -27,8 +27,17 @@ rules keep it from pairing the wrong device, see [DESIGN.md](DESIGN.md).
 
 ## Installing
 
-Download `matterbook.zip` from a `ha-matterbook-v*` release and unpack it into
-your Home Assistant configuration:
+### HACS
+
+MatterBook is published from its own repository, because HACS serves one
+integration per repository:
+
+**HACS → ⋮ → Custom repositories** → `https://github.com/fonix232/matterbook`,
+category **Integration**. Then install MatterBook and restart Home Assistant.
+
+### By hand
+
+Download `matterbook.zip` from a release and unpack it into your configuration:
 
 ```bash
 unzip matterbook.zip -d /config/custom_components/matterbook/
@@ -43,12 +52,10 @@ scp -r custom_components/matterbook root@homeassistant:/config/custom_components
 Either way, restart Home Assistant and add **MatterBook** from
 *Settings → Devices & services → Add integration*.
 
-> **HACS:** not from this repository. HACS reads a *repository's* newest release
-> tag as the version, and this monorepo also publishes Unraid and TrueNAS
-> releases, so HACS would offer one of those and then fail to find
-> `matterbook.zip` in it. Everything needed to publish MatterBook as its own
-> HACS repository — `hacs.json`, validation, CI and release workflows — is
-> already here and takes one command; see [SPLIT.md](SPLIT.md).
+> Development happens here in `network-tools`; `fonix232/matterbook` is the
+> publishing mirror, produced by `git subtree split`. [SPLIT.md](SPLIT.md) is the
+> runbook for keeping the two in step, and explains why HACS cannot install from
+> a monorepo.
 
 ## Using it
 

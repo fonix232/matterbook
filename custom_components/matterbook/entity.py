@@ -23,6 +23,6 @@ class MatterBookEntity(CoordinatorEntity[MatterBookCoordinator]):
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, coordinator.config_entry.entry_id)},
             name="MatterBook",
-            manufacturer="network-tools",
+            manufacturer="MatterBook",
             entry_type=DeviceEntryType.SERVICE,
         )
