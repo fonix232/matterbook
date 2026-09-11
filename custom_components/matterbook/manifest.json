@@ -1,6 +1,10 @@
 {
   "domain": "matterbook",
   "name": "MatterBook",
+  "after_dependencies": [
+    "matter",
+    "bluetooth"
+  ],
   "codeowners": [
     "@fonix232"
   ],
@@ -10,10 +14,6 @@
     "websocket_api",
     "frontend",
     "panel_custom"
-  ],
-  "after_dependencies": [
-    "matter",
-    "bluetooth"
   ],
   "documentation": "https://github.com/fonix232/matterbook",
   "integration_type": "service",

@@ -222,3 +222,7 @@ npm run dev        # unminified, rebuild on save
 The built bundle at `custom_components/matterbook/panel/matterbook-panel.js` is
 committed — installers have Home Assistant, not Node — and CI fails if it is
 stale. See [panel/README.md](panel/README.md).
+
+## Licence
+
+[MIT](LICENSE).
