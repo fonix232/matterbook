@@ -79,6 +79,10 @@ jobs:
           esac
 
           version="${major}.${minor}.${patch}"
+          # Say the decision out loud: the log is where you look when a release
+          # comes out with a version you did not expect.
+          echo "Bump: ${{ inputs.bump }}"
+          echo "Next version: $version (tag v$version)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
           {
