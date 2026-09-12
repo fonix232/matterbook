@@ -12,6 +12,7 @@
     "check": "npm run typecheck && npm run build"
   },
   "dependencies": {
+    "jsqr": "^1.4.0",
     "lit": "^3.2.1"
   },
   "devDependencies": {

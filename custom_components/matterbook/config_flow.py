@@ -12,14 +12,12 @@ from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
-    TextSelector,
 )
 
 from .const import (
     CONF_ALLOW_TRIALS,
     CONF_APPLY_METADATA,
     CONF_AUTO_PAIR,
-    CONF_CSV_PATH,
     CONF_MAX_ATTEMPTS,
     CONF_PAIR_ON_ADD,
     CONF_PAIR_TIMEOUT,
@@ -30,7 +28,6 @@ from .const import (
     DEFAULT_ALLOW_TRIALS,
     DEFAULT_APPLY_METADATA,
     DEFAULT_AUTO_PAIR,
-    DEFAULT_CSV_FILENAME,
     DEFAULT_MAX_ATTEMPTS,
     DEFAULT_PAIR_ON_ADD,
     DEFAULT_PAIR_TIMEOUT,
@@ -58,19 +55,19 @@ class MatterBookConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Ask only where the book lives; everything else is an option."""
+        """Confirm and create the entry.
+
+        There is nothing to ask: the book and its images live in one fixed
+        directory under the configuration folder, and everything else is an
+        option that can be changed later.
+        """
         await self.async_set_unique_id(DOMAIN)
         self._abort_if_unique_id_configured()
 
         if user_input is not None:
-            return self.async_create_entry(title="MatterBook", data=user_input)
+            return self.async_create_entry(title="MatterBook", data={})
 
-        return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema(
-                {vol.Required(CONF_CSV_PATH, default=DEFAULT_CSV_FILENAME): TextSelector()}
-            ),
-        )
+        return self.async_show_form(step_id="user", data_schema=vol.Schema({}))
 
     @staticmethod
     def async_get_options_flow(config_entry: ConfigEntry) -> MatterBookOptionsFlow:

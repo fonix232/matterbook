@@ -321,16 +321,24 @@ def add_imported_entry(
     return entry
 
 
-def set_entry_code(path: Path, entry_id: str, code: str) -> MatterBookEntry:
-    """Give an imported row its setup code, once the sticker turns up.
+def set_entry_code(
+    path: Path, entry_id: str, code: str, *, replace: bool = False
+) -> MatterBookEntry:
+    """Set a row's setup code: fill in an imported row, or correct a wrong one.
 
-    This is the one way a row's code may change: `update_entry` refuses, because
-    editing a code in place would silently invalidate the identity columns
-    derived from it. Here they are all recomputed.
+    This is the one way a row's code may change. `update_entry` refuses, because
+    editing a code in place would leave the identity columns derived from it
+    describing the old device. Here they are recomputed, and the ones the code
+    cannot supply are cleared rather than left to rot.
+
+    Args:
+        replace: permit overwriting a code that is already there. Off by default
+            so a mistyped id cannot silently repoint an entry at another device.
 
     Raises:
         InvalidSetupCode: if the code is not a Matter onboarding payload.
-        MatterBookError: if the row does not exist, or already has a code.
+        MatterBookError: if the row does not exist, or already has a code and
+            `replace` was not asked for.
     """
     entries = read_entries(path)
     for entry in entries:
@@ -339,16 +347,23 @@ def set_entry_code(path: Path, entry_id: str, code: str) -> MatterBookEntry:
     else:
         raise MatterBookError(f"No MatterBook entry with id {entry_id}")
 
-    if entry.code:
+    if entry.code and not replace:
         raise MatterBookError(
-            "That entry already has a setup code; delete it and add it again to replace it"
+            "That entry already has a setup code; ask to replace it to change it"
         )
-    if any(other.code == parse_setup_code(code).code for other in entries):
+
+    normalised = parse_setup_code(code).code
+    if any(other.id != entry_id and other.code == normalised for other in entries):
         raise MatterBookError("That setup code is already in the MatterBook")
 
+    if entry.code and entry.code != normalised:
+        # A new code may describe a different device, so the discriminators the
+        # old one produced have to go; anything read back from a real node
+        # (serial, unique id) stays, because that came from the device itself.
+        entry.discriminator = None
+        entry.short_discriminator = None
+
     entry.code = code.strip()
-    # The identity columns are derived from the code, and the import filled some
-    # of them in from the node; the decoder must not overwrite those.
     enrich_from_code(entry)
     if entry.status == STATUS_CODE_MISSING:
         entry.status = STATUS_PAIRED if entry.node_id is not None else STATUS_PENDING

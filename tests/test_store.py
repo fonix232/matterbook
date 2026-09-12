@@ -331,3 +331,34 @@ def test_set_entry_code_needs_a_real_entry(tmp_path: Path) -> None:
     path = tmp_path / "matterbook.csv"
     with pytest.raises(MatterBookError):
         set_entry_code(path, "nope", QR)
+
+
+def test_replacing_a_code_clears_the_identity_the_old_one_implied(tmp_path: Path) -> None:
+    path = tmp_path / "matterbook.csv"
+    entry = add_entry(path, QR)
+    assert entry.discriminator == 3840
+
+    # A serial read back from a real device survives; discriminators derived from
+    # the old code do not, because the new code may be a different device.
+    update_entry(path, entry.id, serial_number="SN-1")
+    replaced = set_entry_code(path, entry.id, MANUAL, replace=True)
+    assert replaced.code == MANUAL
+    assert replaced.discriminator is None
+    assert replaced.short_discriminator == 15
+    assert replaced.serial_number == "SN-1"
+
+
+def test_replacing_a_code_still_refuses_a_duplicate(tmp_path: Path) -> None:
+    path = tmp_path / "matterbook.csv"
+    first = add_entry(path, QR)
+    add_entry(path, QR_OTHER)
+    with pytest.raises(MatterBookError):
+        set_entry_code(path, first.id, QR_OTHER, replace=True)
+
+
+def test_setting_the_same_code_again_is_harmless(tmp_path: Path) -> None:
+    path = tmp_path / "matterbook.csv"
+    entry = add_entry(path, QR)
+    same = set_entry_code(path, entry.id, QR, replace=True)
+    assert same.code == QR
+    assert same.discriminator == 3840

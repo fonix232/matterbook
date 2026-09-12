@@ -102,6 +102,11 @@ timer the panel would otherwise need.
 
 ## Screens
 
+Actions belong to the page they act on, rather than to a toolbar that follows
+you around: **Add entry** and **Import from Matter** are about the book, and
+**Scan now** is about what is advertising. A single shared toolbar made it look
+as though scanning had something to do with the row you were looking at.
+
 ### 1. The book
 
 The default view. One row per entry:
@@ -112,8 +117,16 @@ Identity strength is shown plainly, because it decides what MatterBook is
 allowed to do on its own: **exact** (a QR payload), **short** (a manual code),
 **none** (a bare passcode). A row that has spent its trial says so.
 
-Actions per row: edit, reveal code, capture or replace label, delete. Bulk
-select for delete and enable/disable.
+Actions per row: **change** the code (or **Add code** on an imported row, which
+is the same screen), reveal code, capture or replace label, delete. Bulk select
+for delete and enable/disable.
+
+The code editor is one element used twice — adding a device and correcting an
+existing entry want the same thing, so they share it. Replacing a code that is
+already there is an explicit flag through to the backend, so a row can never be
+repointed at a different device as a side effect of an edit; and the
+discriminators the old code implied are cleared, because the new code may not
+describe the same hardware.
 
 ### 2. Devices in pairing mode
 
@@ -163,13 +176,28 @@ backend — it is the ordinary path with the ambiguity removed by a human.
 
 ### 4. Capture
 
-Add a device by scanning it, in three states: *scan the code* → *photograph the
-label* → *name it*.
+Add a device by scanning it: *scan or photograph the code* → *name it*.
 
-Scanning reuses the frontend's own `ha-qr-scanner`, which decodes with a ZXing
-WebAssembly build Home Assistant serves locally (`/static/js/zxing_reader.wasm`,
-so it works with no internet) and hands off to the **native** scanner inside the
-companion app via `addExternalBarCodeListener`.
+`ha-qr-scanner` was the obvious thing to reuse, but it is an internal frontend
+component and is only defined once Home Assistant has loaded the chunk that
+imports it — a custom panel cannot rely on it being there. So the panel carries
+its own, which also means it behaves the same in every context:
+
+* **`BarcodeDetector`** where the browser has it: native, fast, free.
+* **jsQR**, bundled, everywhere else. This is what makes iOS work at all —
+  Safari does not implement `BarcodeDetector`, and the companion app's WebView
+  is Safari. It is most of the panel bundle's size, and worth it.
+
+Two constraints shape the interface more than the decoders do:
+
+* A live camera needs `getUserMedia`, which browsers expose only in a **secure
+  context**. Home Assistant over plain `http://` on a LAN is not one, so on many
+  ordinary installs live scanning cannot work. The panel checks
+  `isSecureContext` and says so plainly rather than failing at the permission
+  prompt.
+* `<input type="file" capture="environment">` has no such restriction and opens
+  the camera app on a phone. It is offered always, and is the reason the feature
+  is usable over plain HTTP at all.
 
 ## The label pipeline
 
@@ -297,9 +325,8 @@ user's theme, including dark mode, without knowing anything about it.
 
 ## Order of work
 
-1. Panel shell, registration, `matterbook/subscribe`, the book view. *(scaffolded)*
-2. Devices view and **Resolve** — the highest-value screen, and the one the
-   backend already produces all the data for.
-3. Capture: scan a code, add a row.
+1. Panel shell, registration, `matterbook/subscribe`, the book view. *(done)*
+2. Devices view and **Resolve**. *(done)*
+3. Capture: scan a code, add a row, correct an existing one. *(done)*
 4. Labels: photograph, rectify, crop, store, display.
 5. Optional add-on: OCR cross-check and upscaling.

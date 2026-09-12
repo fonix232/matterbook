@@ -120,8 +120,6 @@ class MatterBookCoordinator(DataUpdateCoordinator[MatterBookData]):
         self.label_dir = label_dir
         """Where scanned label images live, alongside the book."""
         self.data = MatterBookData()
-        self.staging: dict[str, str] = {}
-        """What the text entities hold for the next row, and the delete row number."""
         self._pair_lock = asyncio.Lock()
         self._cooldowns: dict[str, datetime] = {}
         self._attempts: dict[str, int] = {}
@@ -219,10 +217,12 @@ class MatterBookCoordinator(DataUpdateCoordinator[MatterBookData]):
             "already_known": len(candidates) - imported,
         }
 
-    async def async_set_code(self, entry_id: str, code: str) -> MatterBookEntry:
-        """Give an imported row its setup code."""
+    async def async_set_code(
+        self, entry_id: str, code: str, *, replace: bool = False
+    ) -> MatterBookEntry:
+        """Set a row's setup code, optionally replacing one already there."""
         entry = await self.hass.async_add_executor_job(
-            partial(set_entry_code, self.csv_path, entry_id, code)
+            partial(set_entry_code, self.csv_path, entry_id, code, replace=replace)
         )
         await self.async_load_book()
         return entry

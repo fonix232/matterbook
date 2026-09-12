@@ -59,13 +59,41 @@ Either way, restart Home Assistant and add **MatterBook** from
 
 ## Using it
 
-Once set up, **MatterBook** appears in the sidebar (admin users only — the panel
-lists setup codes and can commission devices). It shows the book, what is
-currently in pairing mode, and the screen for resolving a code that could mean
-more than one device. [PANEL.md](PANEL.md) describes it.
+**MatterBook** appears in the sidebar, admin-only: the panel lists setup codes
+and can commission devices onto your fabric.
 
-The entities below do the same jobs without the panel, and are what automations
-should use.
+### The Book page
+
+Everything about entries happens here.
+
+* **Add entry** — scan the QR code with the camera, photograph the label, or
+  type the code. Name and area are filled in on the same screen and applied to
+  the device once it pairs.
+* **Import from Matter** — see below.
+* **change** / **Add code** on a row — the same scanner, pointed at an entry
+  that already exists, for correcting a mistyped code or filling in an imported
+  row once you find its sticker.
+
+Scanning uses the browser's own barcode reader where there is one, and a
+bundled decoder everywhere else, so it works on iOS too. Two things to know:
+
+* A **live camera** needs a secure connection. Home Assistant reached over plain
+  `http://` on your LAN is not one, and the camera will refuse to open.
+* **Take a photo** has no such restriction — on a phone it opens the camera app
+  — so that path works regardless, as does typing the code.
+
+**Prefer the QR payload.** It carries the full discriminator, so MatterBook can
+always tell which device a row means. A manual code narrows to one device in
+sixteen, and a bare passcode names no device at all; those rows still work, but
+get a single blind attempt each, and only when nothing else could be meant (see
+[DESIGN.md](DESIGN.md)).
+
+### The "In pairing mode" page
+
+What is advertising right now, from both discovery sources, and what MatterBook
+made of each one — matched, ambiguous, or unknown. **Scan now** looks again
+without waiting for the next sweep, and **Resolve** is where you answer the
+question the matcher refuses to guess at.
 
 ### Starting from an existing Matter setup
 
@@ -80,41 +108,14 @@ done — nothing on the fabric is holding it. `open_commissioning_window` mints 
 printed on its label, so that is no substitute.
 
 What the import gives you is the other 90%: an inventory, names and areas
-preserved for the next rebuild, and a checklist — `sensor.matterbook_entries_without_a_code`
-— of the stickers still to be found. Add each code as it turns up, from the
-panel or with `matterbook.set_code`, and the row becomes fully pairable.
+preserved for the next rebuild, and a checklist —
+`sensor.matterbook_entries_without_a_code` — of the stickers still to be found.
 
-### Adding a device
+### Entities
 
-Fill in the text fields and press **Add entry**:
+The panel covers day-to-day use; these exist for automations and dashboards.
 
-| Entity | What it is |
-| --- | --- |
-| `text.matterbook_new_entry_setup_code` | The QR payload (`MT:…`), the 11- or 21-digit manual pairing code, or the bare 8-digit passcode |
-| `text.matterbook_new_entry_name` | What the device should be called once paired |
-| `text.matterbook_new_entry_area` | Which area it should land in |
-| `text.matterbook_new_entry_notes` | Anything you want to remember |
-| `button.matterbook_add_entry` | Files the row and clears the fields |
-
-By default MatterBook scans immediately after a row is added — if the device is
-already blinking at you, it pairs then and there.
-
-**Prefer the QR payload.** It carries the full discriminator, so MatterBook can
-always tell which device a row means. A manual code narrows to one device in
-sixteen, and a bare passcode names no device at all; those rows still work, but
-only get a single blind attempt each, and only when nothing else could be meant
-(see [DESIGN.md](DESIGN.md)).
-
-### Removing one
-
-Set `number.matterbook_row_to_delete` to the row number shown on the Entries
-sensor, then press `button.matterbook_delete_entry`. Row numbers shift after a
-deletion; automations should use the stable `entry_id` with the
-`matterbook.remove_entry` action instead.
-
-### Watching it work
-
-| Entity | Shows |
+| Entity | Shows or does |
 | --- | --- |
 | `sensor.matterbook_entries` | How many rows, with all of them (codes masked) as attributes |
 | `sensor.matterbook_pending_entries` | Rows still waiting for their device |
@@ -154,16 +155,18 @@ automation:
 
 ## The book
 
-A CSV, by default `config/matterbook/database.csv`, written atomically and `0600`:
+Everything MatterBook owns lives in **`config/matterbook/`**: the book at
+`database.csv`, label images in `labels/`, and anything added later. The
+location is not configurable — one known directory is worth more than the
+flexibility, because it is the thing you back up, keep out of git, and copy to a
+new install.
+
+The book is a CSV, written atomically and `0600`:
 
 ```csv
 id,name,code,vendor_id,product_id,discriminator,short_discriminator,serial_number,unique_id,area,notes,enabled,status,node_id,paired_at,last_attempt_at,attempt_count,trial_used,last_error
 a1b2c3d4e5f6,Kitchen ceiling,MT:Y.K9042C00KA0648G00,65521,32768,3840,15,,,Kitchen,behind the trim,true,paired,12,2026-09-11T09:14:02+00:00,2026-09-11T09:14:02+00:00,0,false,
 ```
-
-Scanned label images will live beside it in `config/matterbook/labels/`, so the
-whole archive — book and stickers — moves, backs up or gets excluded as one
-directory.
 
 Edit it outside Home Assistant if you like — then call
 `matterbook.reload_book`. Unknown columns are ignored and missing ones take

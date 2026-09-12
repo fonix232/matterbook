@@ -92,11 +92,22 @@ export function importFromMatter(hass: HomeAssistant): Promise<ImportSummary> {
   return hass.callWS<ImportSummary>({ type: "matterbook/import" });
 }
 
-/** Give an imported row its setup code. */
+/**
+ * Set a row's setup code: fill in an imported row, or correct a wrong one.
+ *
+ * `replace` has to be asked for, so a row that already has a code never changes
+ * it as a side effect.
+ */
 export function setCode(
   hass: HomeAssistant,
   entryId: string,
   code: string,
+  replace = false,
 ): Promise<BookEntry> {
-  return hass.callWS<BookEntry>({ type: "matterbook/set_code", entry_id: entryId, code });
+  return hass.callWS<BookEntry>({
+    type: "matterbook/set_code",
+    entry_id: entryId,
+    code,
+    replace,
+  });
 }

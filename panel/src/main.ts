@@ -8,11 +8,20 @@
 import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 
-import { importFromMatter, pairEntry, scan, setCode, subscribeMatterBook } from "./api";
+import {
+  addEntry,
+  importFromMatter,
+  pairEntry,
+  scan,
+  setCode,
+  subscribeMatterBook,
+} from "./api";
 import { sharedStyles } from "./styles";
 import type { BookEntry, DiscoveredDevice, HomeAssistant, MatterBookState } from "./types";
 import "./views/book-view";
-import type { SetCodeRequest } from "./views/book-view";
+import type { EditCodeRequest } from "./views/book-view";
+import "./views/code-entry";
+import type { CodeEntryResult } from "./views/code-entry";
 import "./views/devices-view";
 import type { ResolveRequest } from "./views/devices-view";
 import "./views/resolve-view";
@@ -39,6 +48,8 @@ export class MatterBookPanel extends LitElement {
   @state() private _busy = false;
   @state() private _resolving?: ResolveRequest;
   @state() private _notice?: string;
+  /** Open when adding a device, or changing the code on the entry it names. */
+  @state() private _editing?: { entryId?: string; code: string };
 
   private _unsubscribe?: () => Promise<void>;
 
@@ -73,7 +84,11 @@ export class MatterBookPanel extends LitElement {
       <div class="content">
         ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
         ${this._notice ? html`<div class="card">${this._notice}</div>` : nothing}
-        ${this._resolving ? this._renderResolve() : this._renderMain()}
+        ${this._editing
+          ? this._renderEditor()
+          : this._resolving
+            ? this._renderResolve()
+            : this._renderMain()}
       </div>
     `;
   }
@@ -91,45 +106,61 @@ export class MatterBookPanel extends LitElement {
       </div>
 
       <div class="toolbar">
-        <button ?disabled=${this._busy} @click=${this._scan}>
-          ${this._busy ? "Working…" : "Scan now"}
-        </button>
-        <button class="secondary" ?disabled=${this._busy} @click=${this._import}>
-          Import from Matter
-        </button>
+        ${this._tab === "book" ? this._renderBookActions() : this._renderDeviceActions()}
         <div class="spacer"></div>
         ${state ? this._renderStatus(state) : nothing}
       </div>
 
-      ${state === undefined
-        ? html`<div class="card empty">Loading…</div>`
-        : this._tab === "book"
+      <div class="grow">
+        ${state === undefined
+          ? html`<div class="card empty">Loading…</div>`
+          : this._tab === "book"
+            ? html`
+                <matterbook-book-view
+                  .entries=${state.entries}
+                  .busy=${this._busy}
+                  @matterbook-edit-code=${this._onEditCode}
+                ></matterbook-book-view>
+              `
+            : html`
+                <matterbook-devices-view
+                  .state=${state}
+                  @matterbook-resolve=${this._onResolveRequested}
+                  @matterbook-add-device=${this._onAddDevice}
+                ></matterbook-devices-view>
+              `}
+        ${state && state.ambiguous.length > 0 && this._tab === "book"
           ? html`
-              <matterbook-book-view
-                .entries=${state.entries}
-                .busy=${this._busy}
-                @matterbook-set-code=${this._onSetCode}
-              ></matterbook-book-view>
+              <div class="card">
+                <strong>${countEntries(state)} entries need a decision.</strong>
+                <p class="muted">
+                  Their codes could mean more than one of the devices currently in
+                  pairing mode, so MatterBook has not touched them.
+                </p>
+                <button @click=${() => (this._tab = "devices")}>Show them</button>
+              </div>
             `
-          : html`
-              <matterbook-devices-view
-                .state=${state}
-                @matterbook-resolve=${this._onResolveRequested}
-                @matterbook-add-device=${this._onAddDevice}
-              ></matterbook-devices-view>
-            `}
-      ${state && state.ambiguous.length > 0 && this._tab === "book"
-        ? html`
-            <div class="card">
-              <strong>${countEntries(state)} entries need a decision.</strong>
-              <p class="muted">
-                Their codes could mean more than one of the devices currently in
-                pairing mode, so MatterBook has not touched them.
-              </p>
-              <button @click=${() => (this._tab = "devices")}>Show them</button>
-            </div>
-          `
-        : nothing}
+          : nothing}
+      </div>
+    `;
+  }
+
+  /** The book is about entries, so: add one, or fill it from the fabric. */
+  private _renderBookActions(): TemplateResult {
+    return html`
+      <button ?disabled=${this._busy} @click=${this._startAdd}>Add entry</button>
+      <button class="secondary" ?disabled=${this._busy} @click=${this._import}>
+        Import from Matter
+      </button>
+    `;
+  }
+
+  /** This page is about what is advertising, so: look again. */
+  private _renderDeviceActions(): TemplateResult {
+    return html`
+      <button ?disabled=${this._busy} @click=${this._scan}>
+        ${this._busy ? "Working…" : "Scan now"}
+      </button>
     `;
   }
 
@@ -159,6 +190,52 @@ export class MatterBookPanel extends LitElement {
         @matterbook-cancel=${() => (this._resolving = undefined)}
       ></matterbook-resolve-view>
     `;
+  }
+
+  private _renderEditor(): TemplateResult {
+    const editing = this._editing!;
+    return html`
+      <matterbook-code-entry
+        .heading=${editing.entryId ? "Change the setup code" : "Add a device"}
+        .withDetails=${!editing.entryId}
+        .code=${editing.code}
+        .busy=${this._busy}
+        @matterbook-code-entered=${this._onCodeEntered}
+        @matterbook-cancel=${() => (this._editing = undefined)}
+      ></matterbook-code-entry>
+    `;
+  }
+
+  private _startAdd(): void {
+    this._error = undefined;
+    this._notice = undefined;
+    this._editing = { code: "" };
+  }
+
+  private _onEditCode(event: CustomEvent<EditCodeRequest>): void {
+    this._error = undefined;
+    this._editing = { entryId: event.detail.entryId, code: "" };
+  }
+
+  private async _onCodeEntered(event: CustomEvent<CodeEntryResult>): Promise<void> {
+    const { code, name, area, notes } = event.detail;
+    const entryId = this._editing?.entryId;
+    this._busy = true;
+    this._error = undefined;
+    try {
+      if (entryId) {
+        // Replacing is explicit: a row that already has a code only changes it
+        // because someone asked to, never as a side effect of an edit.
+        await setCode(this.hass, entryId, code, true);
+      } else {
+        await addEntry(this.hass, { code, name, area, notes });
+      }
+      this._editing = undefined;
+    } catch (err) {
+      this._error = `That code was not accepted: ${errorText(err)}`;
+    } finally {
+      this._busy = false;
+    }
   }
 
   private async _scan(): Promise<void> {
@@ -198,18 +275,6 @@ export class MatterBookPanel extends LitElement {
     }
   }
 
-  private async _onSetCode(event: CustomEvent<SetCodeRequest>): Promise<void> {
-    this._busy = true;
-    this._error = undefined;
-    try {
-      await setCode(this.hass, event.detail.entryId, event.detail.code);
-    } catch (err) {
-      this._error = `That code was not accepted: ${errorText(err)}`;
-    } finally {
-      this._busy = false;
-    }
-  }
-
   private _onResolveRequested(event: CustomEvent<ResolveRequest>): void {
     this._resolving = event.detail;
   }
@@ -228,12 +293,12 @@ export class MatterBookPanel extends LitElement {
   }
 
   private _onAddDevice(event: CustomEvent<DiscoveredDevice>): void {
-    // The capture flow lands here: a device with no entry, whose discriminator
-    // and vendor are already known, so only the code and a name are missing.
-    this._error =
-      `Adding devices from the panel is not built yet — device ` +
-      `${event.detail.discriminator ?? "?"} is waiting. Use the text fields and the ` +
-      `Add entry button for now.`;
+    // Straight into the same flow as Add entry: the device is in front of the
+    // user and advertising, so all that is missing is its code.
+    this._notice = `Adding the device advertising discriminator ${
+      event.detail.discriminator ?? "?"
+    }. Scan or type the code from its label.`;
+    this._editing = { code: "" };
   }
 }
 

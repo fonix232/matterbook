@@ -9,9 +9,15 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+    callback,
+)
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, entity_registry as er
 
 from .const import (
     ATTR_AREA,
@@ -21,10 +27,10 @@ from .const import (
     ATTR_NOTES,
     ATTR_ROW,
     ATTR_SERIAL_NUMBER,
-    CONF_CSV_PATH,
-    DEFAULT_CSV_FILENAME,
-    DEFAULT_LABEL_DIRNAME,
+    CSV_FILENAME,
+    DATA_DIRNAME,
     DOMAIN,
+    LABEL_DIRNAME,
     SERVICE_ADD_ENTRY,
     SERVICE_IMPORT,
     SERVICE_PAIR,
@@ -44,10 +50,8 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [
     Platform.BUTTON,
-    Platform.NUMBER,
     Platform.SENSOR,
     Platform.SWITCH,
-    Platform.TEXT,
 ]
 
 type MatterBookConfigEntry = ConfigEntry[MatterBookCoordinator]
@@ -87,32 +91,40 @@ PAIR_SCHEMA = vol.Schema(
 )
 
 
-def resolve_csv_path(hass: HomeAssistant, configured: str | None) -> Path:
-    """Return the MatterBook path, relative paths resolving inside the config dir."""
-    candidate = Path(configured or DEFAULT_CSV_FILENAME)
-    if candidate.is_absolute():
-        return candidate
-    return Path(hass.config.path(str(candidate)))
+def data_dir(hass: HomeAssistant) -> Path:
+    """Return MatterBook's directory: everything it owns lives here.
+
+    Deliberately not configurable. One known location is worth more than the
+    flexibility: it is the directory to back up, to keep out of git, and to copy
+    when moving to a new install.
+    """
+    return Path(hass.config.path(DATA_DIRNAME))
 
 
-def resolve_label_dir(csv_path: Path) -> Path:
-    """Return the directory for label images, alongside the book itself."""
-    return csv_path.parent / DEFAULT_LABEL_DIRNAME
+def csv_path(hass: HomeAssistant) -> Path:
+    """Return the path of the book."""
+    return data_dir(hass) / CSV_FILENAME
+
+
+def label_dir(hass: HomeAssistant) -> Path:
+    """Return the directory holding scanned label images."""
+    return data_dir(hass) / LABEL_DIRNAME
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: MatterBookConfigEntry) -> bool:
     """Set up MatterBook from a config entry."""
-    csv_path = resolve_csv_path(hass, entry.data.get(CONF_CSV_PATH))
-    coordinator = MatterBookCoordinator(hass, entry, csv_path, resolve_label_dir(csv_path))
+    book = csv_path(hass)
+    coordinator = MatterBookCoordinator(hass, entry, book, label_dir(hass))
     entry.runtime_data = coordinator
 
+    _async_remove_retired_entities(hass, entry)
     await coordinator.async_load_book()
-    _LOGGER.debug("MatterBook loaded %s entries from %s", len(coordinator.data.entries), csv_path)
+    _LOGGER.debug("MatterBook loaded %s entries from %s", len(coordinator.data.entries), book)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _async_register_services(hass)
     async_register_commands(hass)
-    await async_register_panel(hass, csv_path)
+    await async_register_panel(hass, book)
 
     # The first scan runs in the background: discovery waits on the Matter server
     # and on BLE, and neither should hold up Home Assistant's startup. Later scans
@@ -122,6 +134,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: MatterBookConfigEntry) -
     )
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
     return True
+
+
+@callback
+def _async_remove_retired_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Drop the entities that the panel replaced.
+
+    0.1.0 shipped text fields, a row-number selector and add/delete buttons to
+    stand in for a user interface. The panel does that job now, and entities
+    left behind by a removed platform linger in the registry as unavailable.
+    """
+    registry = er.async_get(hass)
+    retired = (
+        "new_entry_code",
+        "new_entry_name",
+        "new_entry_area",
+        "new_entry_notes",
+        "new_entry_serial_number",
+        "delete_row",
+        "add_entry",
+        "delete_entry",
+    )
+    for key in retired:
+        unique_id = f"{entry.entry_id}_{key}"
+        for domain in (Platform.TEXT, Platform.NUMBER, Platform.BUTTON):
+            entity_id = registry.async_get_entity_id(domain, DOMAIN, unique_id)
+            if entity_id is not None:
+                _LOGGER.debug("Removing retired MatterBook entity %s", entity_id)
+                registry.async_remove(entity_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: MatterBookConfigEntry) -> bool:

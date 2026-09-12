@@ -5,6 +5,9 @@ add_entry:
       example: "MT:Y.K9042C00KA0648G00"
       selector:
         text:
+    replace:
+      selector:
+        boolean:
     name:
       example: "Kitchen ceiling light"
       selector:
@@ -64,3 +67,6 @@ set_code:
       example: "MT:Y.K9042C00KA0648G00"
       selector:
         text:
+    replace:
+      selector:
+        boolean:

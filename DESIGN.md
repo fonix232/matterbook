@@ -131,8 +131,11 @@ carries the addresses that decide whether commissioning can stay on IP.
 
 ## Storage
 
-A CSV at `config/matterbook/database.csv`, written atomically and `0600`, with
-label images destined for `labels/` beside it so the archive is one directory. Not HA's `Store`
+One directory, `config/matterbook/`, holding the book (`database.csv`, written
+atomically and `0600`) and label images (`labels/`). The location is fixed
+rather than configurable: a single known directory is what gets backed up, kept
+out of git and copied to a new install, and every option that lets it move is
+one more place for half an archive to end up. Not HA's `Store`
 helper, because the point of a *book* is that you can open it, read it, diff it,
 grep it and back it up without Home Assistant's help. Unknown columns are
 ignored and missing ones take their defaults, so a book written by another

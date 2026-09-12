@@ -3,13 +3,8 @@
     "step": {
       "user": {
         "title": "MatterBook",
-        "description": "MatterBook keeps your Matter setup codes in a CSV file and commissions the devices it recognises when they turn up in pairing mode.\n\nThe file holds device passcodes, so treat it like secrets.yaml.",
-        "data": {
-          "csv_path": "MatterBook file"
-        },
-        "data_description": {
-          "csv_path": "Relative paths are resolved inside your Home Assistant configuration directory."
-        }
+        "description": "MatterBook keeps your Matter setup codes in `config/matterbook/` and commissions the devices it recognises when they turn up in pairing mode.\n\nThat folder holds device passcodes, so treat it like secrets.yaml.",
+        "data": {}
       }
     },
     "abort": {
@@ -44,22 +39,11 @@
   },
   "entity": {
     "button": {
-      "add_entry": {
-        "name": "Add entry"
-      },
-      "delete_entry": {
-        "name": "Delete entry"
-      },
       "scan_now": {
         "name": "Scan now"
       },
       "import_from_matter": {
         "name": "Import from Matter"
-      }
-    },
-    "number": {
-      "delete_row": {
-        "name": "Row to delete"
       }
     },
     "sensor": {
@@ -85,23 +69,6 @@
     "switch": {
       "auto_pairing": {
         "name": "Auto pairing"
-      }
-    },
-    "text": {
-      "new_entry_code": {
-        "name": "New entry setup code"
-      },
-      "new_entry_name": {
-        "name": "New entry name"
-      },
-      "new_entry_area": {
-        "name": "New entry area"
-      },
-      "new_entry_notes": {
-        "name": "New entry notes"
-      },
-      "new_entry_serial_number": {
-        "name": "New entry serial number"
       }
     }
   },
@@ -183,6 +150,10 @@
         "code": {
           "name": "Setup code",
           "description": "The QR payload (MT:...), manual pairing code, or 8-digit passcode."
+        },
+        "replace": {
+          "name": "Replace",
+          "description": "Allow overwriting a code the entry already has."
         }
       }
     }

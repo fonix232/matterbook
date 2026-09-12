@@ -319,19 +319,26 @@ async def websocket_import(
         vol.Required(TYPE): "matterbook/set_code",
         vol.Required("entry_id"): str,
         vol.Required("code"): str,
+        vol.Optional("replace", default=False): bool,
     }
 )
 @websocket_api.async_response
 async def websocket_set_code(
     hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
 ) -> None:
-    """Give an imported row its setup code, once its sticker turns up."""
+    """Set a row's code: fill in an imported row, or correct a wrong one.
+
+    Replacing an existing code has to be asked for, so a mistyped entry id
+    cannot quietly repoint a row at a different device.
+    """
     coordinator = _require_coordinator(hass, connection, msg)
     if coordinator is None:
         return
 
     try:
-        entry = await coordinator.async_set_code(msg["entry_id"], msg["code"])
+        entry = await coordinator.async_set_code(
+            msg["entry_id"], msg["code"], replace=msg["replace"]
+        )
     except (InvalidSetupCode, MatterBookError) as err:
         connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, str(err))
         return

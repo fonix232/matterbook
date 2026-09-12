@@ -8,18 +8,39 @@ import { css } from "lit";
  * it. The fallbacks are only for rendering outside HA, such as a unit test.
  */
 export const sharedStyles = css`
+  /* The panel is handed a slot in the Home Assistant shell that is as tall as
+     the viewport minus the header. Without claiming that height the element is
+     only as tall as its content, so the page background stops partway down and
+     everything hugs the top of an otherwise empty screen. */
   :host {
-    display: block;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    min-height: 100%;
+    height: 100%;
     color: var(--primary-text-color, #212121);
     background: var(--primary-background-color, #fafafa);
-    min-height: 100%;
     font-family: var(--paper-font-body1_-_font-family, Roboto, system-ui, sans-serif);
   }
 
   .content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    width: 100%;
+    box-sizing: border-box;
     padding: 16px;
     max-width: 1100px;
     margin: 0 auto;
+  }
+
+  /* The list is the part that should take up the slack and scroll, rather than
+     the whole page growing and leaving the toolbar out of reach. */
+  .grow {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
   }
 
   .card {
@@ -116,6 +137,15 @@ export const sharedStyles = css`
     color: var(--text-primary-color, #fff);
   }
 
+  /* An inline affordance inside a table cell, not a control in its own right. */
+  button.link {
+    background: none;
+    color: var(--primary-color, #03a9f4);
+    padding: 0 0 0 6px;
+    font-size: inherit;
+    text-decoration: underline;
+  }
+
   button.secondary {
     background: transparent;
     color: var(--primary-color, #03a9f4);
@@ -163,6 +193,55 @@ export const sharedStyles = css`
     padding: 12px 16px;
     border-radius: 4px;
     margin-bottom: 16px;
+  }
+
+  .field {
+    margin-bottom: 16px;
+  }
+
+  .field label {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--secondary-text-color, #727272);
+    margin-bottom: 4px;
+  }
+
+  input[type="text"],
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    padding: 10px 12px;
+    border-radius: 4px;
+    border: 1px solid var(--divider-color, #e0e0e0);
+    background: var(--card-background-color, #fff);
+    color: var(--primary-text-color, #212121);
+  }
+
+  input[type="text"]:focus,
+  textarea:focus {
+    outline: 2px solid var(--primary-color, #03a9f4);
+    outline-offset: -2px;
+  }
+
+  .field p {
+    margin: 6px 0 0;
+    font-size: 0.85rem;
+  }
+
+  .viewfinder {
+    margin-bottom: 16px;
+  }
+
+  .viewfinder video {
+    width: 100%;
+    max-height: 46vh;
+    border-radius: 8px;
+    background: #000;
+    object-fit: cover;
   }
 
   @media (max-width: 600px) {

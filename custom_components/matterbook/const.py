@@ -7,13 +7,14 @@ from typing import Final
 DOMAIN: Final = "matterbook"
 MATTER_DOMAIN: Final = "matter"
 
-# The book and its label images share one directory, so the whole archive can be
-# backed up, moved or excluded as a unit.
-DEFAULT_DATA_DIR: Final = "matterbook"
-DEFAULT_CSV_FILENAME: Final = f"{DEFAULT_DATA_DIR}/database.csv"
-DEFAULT_LABEL_DIRNAME: Final = "labels"
+# Everything MatterBook owns lives in one directory under the Home Assistant
+# configuration: the book, the label images, anything added later. It is not
+# configurable — one known location is worth more than the flexibility, because
+# it is the directory you back up, exclude from git, and copy to a new install.
+DATA_DIRNAME: Final = "matterbook"
+CSV_FILENAME: Final = "database.csv"
+LABEL_DIRNAME: Final = "labels"
 
-CONF_CSV_PATH: Final = "csv_path"
 CONF_SCAN_INTERVAL: Final = "scan_interval"
 CONF_AUTO_PAIR: Final = "auto_pair"
 CONF_PAIR_TIMEOUT: Final = "pair_timeout"
