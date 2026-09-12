@@ -1,6 +1,6 @@
 /** Typed wrappers around the integration's WebSocket commands. */
 
-import type { BookEntry, HomeAssistant, MatterBookState } from "./types";
+import type { BookEntry, HomeAssistant, MatterBookOptions, MatterBookState } from "./types";
 
 /**
  * Subscribe to the whole MatterBook state.
@@ -110,4 +110,23 @@ export function setCode(
     code,
     replace,
   });
+}
+
+/** Read the current settings, with the backend's defaults already filled in. */
+export function getOptions(hass: HomeAssistant): Promise<MatterBookOptions> {
+  return hass.callWS<MatterBookOptions>({ type: "matterbook/options" });
+}
+
+/**
+ * Save settings.
+ *
+ * This reloads the config entry, which is what makes a new scan interval take
+ * effect — and which tears the subscription down, so the caller has to take a
+ * new one out afterwards.
+ */
+export function setOptions(
+  hass: HomeAssistant,
+  options: Partial<MatterBookOptions>,
+): Promise<MatterBookOptions> {
+  return hass.callWS<MatterBookOptions>({ type: "matterbook/set_options", options });
 }

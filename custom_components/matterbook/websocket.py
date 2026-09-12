@@ -17,12 +17,36 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 
-from .const import DOMAIN
+from .const import (
+    CONF_ALLOW_TRIALS,
+    CONF_APPLY_METADATA,
+    CONF_AUTO_PAIR,
+    CONF_MAX_ATTEMPTS,
+    CONF_PAIR_ON_ADD,
+    CONF_PAIR_TIMEOUT,
+    CONF_REQUIRE_EXACT_MATCH,
+    CONF_RETRY_COOLDOWN,
+    CONF_SCAN_INTERVAL,
+    CONF_USE_BLUETOOTH,
+    DEFAULT_ALLOW_TRIALS,
+    DEFAULT_APPLY_METADATA,
+    DEFAULT_AUTO_PAIR,
+    DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_PAIR_ON_ADD,
+    DEFAULT_PAIR_TIMEOUT,
+    DEFAULT_REQUIRE_EXACT_MATCH,
+    DEFAULT_RETRY_COOLDOWN,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_USE_BLUETOOTH,
+    DOMAIN,
+)
 from .coordinator import MatterBookCoordinator
+from .http import async_signed_qr_url
 from .matching import DiscoveredDevice
 from .matter_link import MatterUnavailable
 from .pairing_code import InvalidSetupCode
-from .store import MatterBookError
+from .qr import qr_payload
+from .store import MatterBookEntry, MatterBookError
 
 TYPE: Final = "type"
 
@@ -38,6 +62,8 @@ def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_pair)
     websocket_api.async_register_command(hass, websocket_import)
     websocket_api.async_register_command(hass, websocket_set_code)
+    websocket_api.async_register_command(hass, websocket_get_options)
+    websocket_api.async_register_command(hass, websocket_set_options)
 
 
 @callback
@@ -50,8 +76,14 @@ def _coordinator(hass: HomeAssistant) -> MatterBookCoordinator | None:
 
 
 @callback
-def _state_payload(coordinator: MatterBookCoordinator) -> dict[str, Any]:
-    """Serialise everything the panel renders."""
+def _state_payload(
+    coordinator: MatterBookCoordinator, refresh_token_id: str | None
+) -> dict[str, Any]:
+    """Serialise everything the panel renders.
+
+    The token belongs to the connection asking, and is what the label URLs are
+    signed with — see `async_signed_qr_url`.
+    """
     data = coordinator.data
     report = data.report
     claimed = {match.device.key for match in report.matches} | {
@@ -59,7 +91,10 @@ def _state_payload(coordinator: MatterBookCoordinator) -> dict[str, Any]:
     }
 
     return {
-        "entries": [entry.redacted() for entry in data.entries],
+        "entries": [
+            _entry_payload(coordinator.hass, entry, refresh_token_id)
+            for entry in data.entries
+        ],
         "devices": [{"key": device.key, **device.describe()} for device in data.discovered],
         "matches": [
             {
@@ -89,6 +124,50 @@ def _state_payload(coordinator: MatterBookCoordinator) -> dict[str, Any]:
         "last_paired": data.last_paired.isoformat() if data.last_paired else None,
         "last_error": data.last_error,
     }
+
+
+@callback
+def _entry_payload(
+    hass: HomeAssistant, entry: MatterBookEntry, refresh_token_id: str | None
+) -> dict[str, Any]:
+    """Describe one row for the panel, with a link to its rendered label.
+
+    The URL is signed because an `<img>` tag cannot carry an authorisation
+    header. Rows whose code is not a QR payload get `None` — see qr.py — and so
+    does every row on a connection with no refresh token to sign as, which is a
+    panel without label pictures rather than a panel that fails.
+    """
+    payload = entry.redacted()
+    payload["qr_url"] = (
+        async_signed_qr_url(hass, entry.id, refresh_token_id, entry.code)
+        if refresh_token_id is not None and qr_payload(entry) is not None
+        else None
+    )
+    return payload
+
+
+OPTION_DEFAULTS: Final = {
+    CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
+    CONF_AUTO_PAIR: DEFAULT_AUTO_PAIR,
+    CONF_ALLOW_TRIALS: DEFAULT_ALLOW_TRIALS,
+    CONF_PAIR_ON_ADD: DEFAULT_PAIR_ON_ADD,
+    CONF_REQUIRE_EXACT_MATCH: DEFAULT_REQUIRE_EXACT_MATCH,
+    CONF_USE_BLUETOOTH: DEFAULT_USE_BLUETOOTH,
+    CONF_APPLY_METADATA: DEFAULT_APPLY_METADATA,
+    CONF_PAIR_TIMEOUT: DEFAULT_PAIR_TIMEOUT,
+    CONF_MAX_ATTEMPTS: DEFAULT_MAX_ATTEMPTS,
+    CONF_RETRY_COOLDOWN: DEFAULT_RETRY_COOLDOWN,
+}
+
+
+def _refresh_token_id(connection: websocket_api.ActiveConnection) -> str | None:
+    """Return the refresh token behind this connection, if it has one.
+
+    Not every connection does — the Supervisor's, for one — and a connection
+    without a token cannot be given signed URLs. That costs the label pictures
+    and nothing else, so it is reported as absence rather than raised.
+    """
+    return connection.refresh_token_id
 
 
 def _device_for_key(coordinator: MatterBookCoordinator, key: str | None) -> DiscoveredDevice | None:
@@ -127,10 +206,16 @@ def websocket_subscribe(
     if coordinator is None:
         return
 
+    # Captured here because the pushes below run from a coordinator callback,
+    # where there is no connection in scope for Home Assistant to infer it from.
+    refresh_token_id = _refresh_token_id(connection)
+
     @callback
     def _forward() -> None:
         connection.send_message(
-            websocket_api.event_message(msg["id"], _state_payload(coordinator))
+            websocket_api.event_message(
+                msg["id"], _state_payload(coordinator, refresh_token_id)
+            )
         )
 
     connection.subscriptions[msg["id"]] = coordinator.async_add_listener(_forward)
@@ -238,7 +323,9 @@ async def websocket_scan(
 
     await coordinator.async_scan_only()
     coordinator.async_update_listeners()
-    connection.send_result(msg["id"], _state_payload(coordinator))
+    connection.send_result(
+        msg["id"], _state_payload(coordinator, _refresh_token_id(connection))
+    )
 
 
 @websocket_api.require_admin
@@ -344,3 +431,61 @@ async def websocket_set_code(
         return
 
     connection.send_result(msg["id"], entry.redacted())
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required(TYPE): "matterbook/options"})
+@callback
+def websocket_get_options(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Return the current settings, with defaults filled in."""
+    coordinator = _require_coordinator(hass, connection, msg)
+    if coordinator is None:
+        return
+
+    assert coordinator.config_entry is not None
+    options = coordinator.config_entry.options
+    connection.send_result(
+        msg["id"], {key: options.get(key, default) for key, default in OPTION_DEFAULTS.items()}
+    )
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required(TYPE): "matterbook/set_options",
+        vol.Required("options"): vol.Schema(
+            {
+                vol.Optional(CONF_SCAN_INTERVAL): vol.All(int, vol.Range(min=30, max=86400)),
+                vol.Optional(CONF_AUTO_PAIR): bool,
+                vol.Optional(CONF_ALLOW_TRIALS): bool,
+                vol.Optional(CONF_PAIR_ON_ADD): bool,
+                vol.Optional(CONF_REQUIRE_EXACT_MATCH): bool,
+                vol.Optional(CONF_USE_BLUETOOTH): bool,
+                vol.Optional(CONF_APPLY_METADATA): bool,
+                vol.Optional(CONF_PAIR_TIMEOUT): vol.All(int, vol.Range(min=30, max=900)),
+                vol.Optional(CONF_MAX_ATTEMPTS): vol.All(int, vol.Range(min=1, max=10)),
+                vol.Optional(CONF_RETRY_COOLDOWN): vol.All(int, vol.Range(min=60, max=86400)),
+            }
+        ),
+    }
+)
+@websocket_api.async_response
+async def websocket_set_options(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Save settings.
+
+    Updating the entry's options reloads the integration, which is what makes a
+    new scan interval take effect — so this deliberately does not try to apply
+    them piecemeal.
+    """
+    coordinator = _require_coordinator(hass, connection, msg)
+    if coordinator is None:
+        return
+
+    entry = coordinator.config_entry
+    assert entry is not None
+    hass.config_entries.async_update_entry(entry, options={**entry.options, **msg["options"]})
+    connection.send_result(msg["id"], {**OPTION_DEFAULTS, **entry.options, **msg["options"]})

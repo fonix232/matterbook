@@ -64,6 +64,13 @@ export interface BookEntry {
   attempt_count: number;
   trial_used: boolean;
   last_error: string;
+  /**
+   * A signed, short-lived URL for the rendered QR label, or `null` when the row
+   * has no honest one — a manual pairing code and a bare passcode are digits,
+   * not QR payloads. Re-signed on every state push, because an `<img>` tag
+   * cannot carry an authorisation header and the signature expires.
+   */
+  qr_url: string | null;
 }
 
 /** A device currently advertising that it is commissionable. */
@@ -113,4 +120,26 @@ export interface MatterBookState {
   last_scan: string | null;
   last_paired: string | null;
   last_error: string | null;
+}
+
+/**
+ * How hard MatterBook tries, stored as the config entry's options.
+ *
+ * Every field is present: the backend fills its defaults in before answering, so
+ * the form never has to decide what an absent value means.
+ */
+export interface MatterBookOptions {
+  /** Seconds between scans. */
+  scan_interval: number;
+  auto_pair: boolean;
+  allow_trials: boolean;
+  pair_on_add: boolean;
+  require_exact_match: boolean;
+  use_bluetooth: boolean;
+  apply_metadata: boolean;
+  /** Seconds one commissioning attempt may take. */
+  pair_timeout: number;
+  max_attempts: number;
+  /** Seconds to leave a failed row alone. */
+  retry_cooldown: number;
 }

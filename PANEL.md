@@ -83,8 +83,16 @@ REST, except for images (which cannot be fetched into an `<img>` any other way).
 | `matterbook/update` | Edits name, area, notes, enabled |
 | `matterbook/scan` | Forces a scan |
 | `matterbook/pair` | Commissions one entry, optionally against one named device — this is what conflict resolution calls |
-| `matterbook/label/upload` | Stores a captured label image for an entry |
-| `matterbook/label/sign` | Returns a signed URL for an entry's label image |
+| `matterbook/import` | Snapshots the devices already commissioned onto this fabric, as rows waiting for their stickers |
+| `matterbook/set_code` | Fills in an imported row's code, or replaces a wrong one |
+| `matterbook/options` | The settings, with the backend's defaults already filled in |
+| `matterbook/set_options` | Saves settings, which reloads the entry |
+| `matterbook/label/upload` | Stores a captured label image for an entry *(not built)* |
+
+Every row in the subscription payload carries a signed URL for its **rendered**
+label, or `null` where the code has no honest QR. Signing per push rather than
+on request saves a round trip per picture; the URL is stable between pushes, for
+the reason under [The label pipeline](#the-label-pipeline).
 
 Codes are **masked in every payload**. The panel never receives a passcode, and
 therefore cannot leak one into a screenshot, a browser cache or a bug report.
@@ -107,28 +115,44 @@ you around: **Add entry** and **Import from Matter** are about the book, and
 **Scan now** is about what is advertising. A single shared toolbar made it look
 as though scanning had something to do with the row you were looking at.
 
+For the same reason there is no single "busy" flag. One flag meant a scan in
+progress greyed out **Add entry** and **Import from Matter**, which share
+nothing with it — the actions are independent, so their disabled states are too.
+Each action disables only the control that started it.
+
 ### 1. The book
 
 The default view. One row per entry:
 
-`name · what it is · status · identity strength · label thumbnail`
+`label · name · code · identity · status · area`
+
+The label is the **rendered** QR — the entry's own payload drawn back into a
+scannable code. Only a QR payload has an honest one: a manual pairing code and a
+bare passcode are digits, and drawing those into a QR would produce something
+that scans, fails in every Matter app, and looks like a defect here rather than
+on the sticker. Those rows say *digits only* instead, which is the more useful
+fact: it is the reason to go and find the sticker again.
 
 Identity strength is shown plainly, because it decides what MatterBook is
 allowed to do on its own: **exact** (a QR payload), **short** (a manual code),
 **none** (a bare passcode). A row that has spent its trial says so.
 
-Actions per row: **change** the code (or **Add code** on an imported row, which
-is the same screen), reveal code, capture or replace label, delete. Bulk select
-for delete and enable/disable.
+Every row has **Edit**; a row imported from the fabric leads with **Add code**,
+which is the same dialog said differently. Both open the editor with the row's
+data already in it.
 
-The code editor is one element used twice — adding a device and correcting an
-existing entry want the same thing, so they share it. Replacing a code that is
-already there is an explicit flag through to the backend, so a row can never be
-repointed at a different device as a side effect of an edit; and the
-discriminators the old code implied are cleared, because the new code may not
-describe the same hardware.
+### 2. Labels
 
-### 2. Devices in pairing mode
+The same book as a wall of stickers. A label is how someone actually finds a
+device — you recognise the picture long before you recognise a row of hex — and
+it is the fastest way to commission one from a phone, since the codes are on
+screen to be scanned. Which is what a book of codes is for, and why the panel is
+admin-only.
+
+Rows with no honest QR appear here too, saying why. Knowing a device has no
+scannable label is the point of looking.
+
+### 3. Devices in pairing mode
 
 What is advertising right now, from both discovery sources, annotated with what
 MatterBook made of each one:
@@ -142,7 +166,7 @@ Signal strength and source (which proxy heard it) are worth showing: they are
 how you work out *which physical device* a row of numbers is, when two identical
 lamps are both blinking.
 
-### 3. Resolve
+### 4. Resolve
 
 The screen that earns the whole panel. It appears when a code could mean several
 devices, or a device could be several entries.
@@ -174,14 +198,40 @@ chosen device is folded into a synthesised payload, so the commissioning is
 addressed exactly at it. Resolution is therefore not a special case in the
 backend — it is the ordinary path with the ambiguity removed by a human.
 
-### 4. Capture
+### 5. Adding and editing
 
-Add a device by scanning it: *scan or photograph the code* → *name it*.
+A **modal**, not a page. Adding a device is an interruption to browsing the
+book, and it ends by going back to it; a page loses your place on the way out.
+
+Adding opens on a menu rather than a form:
+
+> **Take a photo** — point the camera at the code on the device or its box.
+> **Choose a photo** — use a picture of the label already on this device.
+> **Type it in** — the QR payload, the pairing code, or the passcode.
+
+The three ways a code gets into the book are genuinely different acts, and a
+form with a camera button somewhere in it makes typing look like the intended
+one — which is the slowest. **Edit** skips the menu: the row is the answer to
+the question it asks, so it goes straight to the form with the row's data in it.
+
+Editing never prefills the code. What a row shows is a mask; the panel is never
+told the code, so there is nothing to put in the field. An empty field therefore
+means *leave the code alone*, which is also the right default, since most edits
+are to the name. Typing a new one replaces it — explicitly, through to the
+backend — so a row can never be repointed at a different device as a side effect
+of a rename, and the discriminators the old code implied are cleared, because
+the new code may not describe the same hardware.
+
+The photograph paths decode in the menu, not in the form, so the file picker
+opens inside the click that asked for it. Opening one a render later works most
+of the time and fails in exactly the place it matters — a phone, where browsers
+are strictest about which gesture opened a picker.
 
 `ha-qr-scanner` was the obvious thing to reuse, but it is an internal frontend
 component and is only defined once Home Assistant has loaded the chunk that
-imports it — a custom panel cannot rely on it being there. So the panel carries
-its own, which also means it behaves the same in every context:
+imports it — a custom panel cannot rely on it being there. The same goes for
+`ha-dialog`, which is why the modal shell is ours too. So the panel carries its
+own decoder, which also means it behaves the same in every context:
 
 * **`BarcodeDetector`** where the browser has it: native, fast, free.
 * **jsQR**, bundled, everywhere else. This is what makes iOS work at all —
@@ -194,10 +244,45 @@ Two constraints shape the interface more than the decoders do:
   context**. Home Assistant over plain `http://` on a LAN is not one, so on many
   ordinary installs live scanning cannot work. The panel checks
   `isSecureContext` and says so plainly rather than failing at the permission
-  prompt.
+  prompt. **Take a photo** then means the camera app rather than a viewfinder.
 * `<input type="file" capture="environment">` has no such restriction and opens
-  the camera app on a phone. It is offered always, and is the reason the feature
-  is usable over plain HTTP at all.
+  the camera app on a phone. `capture` is set per click rather than baked into
+  the markup, because it is the only difference between *take a photo* and
+  *choose a photo*.
+
+### 6. Settings
+
+The config entry's options, edited in the panel: how often to scan, whether to
+listen over Bluetooth, whether to pair automatically, whether to act on anything
+weaker than an exact match, and whether a row may ever spend its one blind
+attempt.
+
+These are the entry's options rather than a file of our own, so Home Assistant's
+own options flow keeps working and the values survive the way every other
+integration's do. Saving them **reloads the entry** — which is what makes a new
+scan interval take effect — and a reload drops every listener the coordinator
+held, this panel's subscription included. So the page says a reload is coming,
+and the panel takes its subscription out again afterwards. Without that last
+part the panel keeps showing whatever it last saw, silently, which looks exactly
+like a scan that never happens.
+
+### Filling the window
+
+`ha-panel-custom`, the element Home Assistant wraps around the panel, sets
+`display: block` and safe-area padding on itself but never a height. A
+percentage height resolves against the parent's *definite* height, and there is
+not one — so `height: 100%` computed to `auto`, and the panel was only as tall
+as its content: the background stopped partway down and everything hugged the
+top of an otherwise empty screen.
+
+Viewport units need no parent. `100dvh` follows a mobile browser's toolbars as
+they collapse, with the safe-area insets subtracted because the padding that
+makes room for them is on the parent; `100vh` above it is the fallback for
+anything that does not know `dvh`.
+
+That rule belongs to the panel element alone. It lived in the shared stylesheet,
+which every view adopts — so every card would have inherited "at least a
+viewport tall", and a page would have come out twice the height it should be.
 
 ## The label pipeline
 
@@ -286,9 +371,31 @@ Two rules:
   authentication.
 
 Serving them needs one wrinkle: `<img src>` cannot send an auth header. The HA
-idiom is a signed path — the panel asks over WebSocket for a URL signed with
-`http.auth.async_sign_path`, with a short expiry, and uses that. Same mechanism
-camera snapshots use.
+idiom is a signed path — the integration signs a URL with
+`http.auth.async_sign_path`, the panel puts that in the tag, and the auth
+middleware accepts the signature in place of the header. Same mechanism camera
+snapshots use, and the same mechanism already serves the **rendered** labels.
+
+Three things about it are not obvious, and all three are load-bearing:
+
+* **The view keeps `requires_auth = True`.** Setting it to `False` looks like
+  "this one is authenticated by its signature instead", and is not: the
+  middleware validates a signature and marks the request authenticated, and the
+  view's own `requires_auth` is what then lets it through. Turning it off means
+  *no check at all*, on an endpoint that serves a picture of a setup passcode.
+* **The signing token is passed in, not inferred.** `async_sign_path` can work
+  out who is asking from the WebSocket connection or HTTP request it is called
+  inside — but these URLs are minted in a coordinator callback, a push, with
+  neither in scope, where it falls back to Home Assistant's read-only *content
+  user*. A URL signed as that user is not an admin's, and an admin-only view
+  rejects it. Handing over the subscriber's own refresh token also means the URL
+  dies with their session.
+* **The URL is remembered.** A signature carries the time it was made, so
+  signing afresh on every push hands the panel a different `src` for the same
+  picture every few minutes, and every open page re-fetches every label it is
+  showing. What the URL has to track is the *code*: a row whose code changed is a
+  different picture at the same path, and the responses carry `no-store`, so
+  only a changed URL makes a browser look again.
 
 ### Where it runs
 
@@ -328,5 +435,7 @@ user's theme, including dark mode, without knowing anything about it.
 1. Panel shell, registration, `matterbook/subscribe`, the book view. *(done)*
 2. Devices view and **Resolve**. *(done)*
 3. Capture: scan a code, add a row, correct an existing one. *(done)*
-4. Labels: photograph, rectify, crop, store, display.
-5. Optional add-on: OCR cross-check and upscaling.
+4. Rendered labels — the entry's own payload drawn back into a scannable code —
+   in the book and in a gallery, and a settings page. *(done)*
+5. Photographed labels: rectify, crop, store, and show beside the rendered one.
+6. Optional add-on: OCR cross-check and upscaling.

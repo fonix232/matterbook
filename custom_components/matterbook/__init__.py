@@ -41,6 +41,7 @@ from .const import (
 )
 from .coordinator import MatterBookCoordinator
 from .frontend import async_register_panel, async_unregister_panel
+from .http import async_register_views
 from .matter_link import MatterUnavailable
 from .pairing_code import InvalidSetupCode
 from .store import MatterBookError
@@ -124,6 +125,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: MatterBookConfigEntry) -
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _async_register_services(hass)
     async_register_commands(hass)
+    async_register_views(hass)
     await async_register_panel(hass, book)
 
     # The first scan runs in the background: discovery waits on the Matter server

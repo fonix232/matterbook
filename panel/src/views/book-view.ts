@@ -10,7 +10,8 @@ const IDENTITY_LABEL: Record<IdentityStrength, string> = {
   none: "None",
 };
 
-export interface EditCodeRequest {
+/** Asks the panel to open the edit dialog on this row. */
+export interface EditEntryRequest {
   entryId: string;
 }
 
@@ -44,11 +45,13 @@ export class MatterBookBookView extends LitElement {
         <table>
           <thead>
             <tr>
+              <th>Label</th>
               <th>Name</th>
               <th>Code</th>
-              <th>Identity</th>
+              <th class="optional">Identity</th>
               <th>Status</th>
-              <th>Area</th>
+              <th class="optional">Area</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -62,12 +65,13 @@ export class MatterBookBookView extends LitElement {
   private _renderRow(entry: BookEntry): TemplateResult {
     return html`
       <tr>
+        <td>${this._renderLabel(entry)}</td>
         <td>
           ${entry.name || html`<span class="muted">unnamed</span>`}
           ${entry.notes ? html`<div class="muted">${entry.notes}</div>` : nothing}
         </td>
         <td>${entry.code ? this._renderCode(entry) : this._renderMissingCode(entry)}</td>
-        <td>
+        <td class="optional">
           <span
             class="badge ${entry.identity_strength}"
             title=${IDENTITY_EXPLANATION[entry.identity_strength]}
@@ -88,20 +92,46 @@ export class MatterBookBookView extends LitElement {
               </div>`
             : nothing}
         </td>
-        <td>${entry.area || html`<span class="muted">—</span>`}</td>
+        <td class="optional">${entry.area || html`<span class="muted">—</span>`}</td>
+        <td>
+          <button class="secondary" ?disabled=${this.busy} @click=${() => this._requestEdit(entry)}>
+            Edit
+          </button>
+        </td>
       </tr>
+    `;
+  }
+
+  /**
+   * The rendered label, small.
+   *
+   * Only a QR payload has an honest picture — see qr.py — so the other kinds say
+   * what they are instead. Knowing a code cannot become a scannable label is
+   * worth more than a blank cell, because it is the reason to go and find the
+   * sticker again.
+   */
+  private _renderLabel(entry: BookEntry): TemplateResult {
+    if (entry.qr_url) {
+      return html`
+        <img
+          class="label-image"
+          src=${entry.qr_url}
+          alt=${`QR label for ${entry.name || "this entry"}`}
+          loading="lazy"
+        />
+      `;
+    }
+    return html`
+      <div class="no-label" title=${LABEL_ABSENCE[entry.code_type] ?? "No label to render."}>
+        ${entry.code ? "digits only" : "no code"}
+      </div>
     `;
   }
 
   private _renderCode(entry: BookEntry): TemplateResult {
     return html`
       <code>${entry.code}</code>
-      <div class="muted">
-        ${entry.code_type}
-        <button class="link" ?disabled=${this.busy} @click=${() => this._requestEdit(entry)}>
-          change
-        </button>
-      </div>
+      <div class="muted">${entry.code_type}</div>
     `;
   }
 
@@ -118,7 +148,7 @@ export class MatterBookBookView extends LitElement {
 
   private _requestEdit(entry: BookEntry): void {
     this.dispatchEvent(
-      new CustomEvent<EditCodeRequest>("matterbook-edit-code", {
+      new CustomEvent<EditEntryRequest>("matterbook-edit-entry", {
         detail: { entryId: entry.id },
         bubbles: true,
         composed: true,
@@ -130,6 +160,17 @@ export class MatterBookBookView extends LitElement {
     return text.length > limit ? `${text.slice(0, limit)}…` : text;
   }
 }
+
+const LABEL_ABSENCE: Record<string, string> = {
+  manual:
+    "A manual pairing code is digits, not a QR. Drawing one would scan and then " +
+    "fail in every Matter app, so MatterBook does not draw it.",
+  passcode:
+    "A bare passcode is digits, not a QR. Drawing one would scan and then fail in " +
+    "every Matter app, so MatterBook does not draw it.",
+  invalid: "This code could not be decoded, so there is nothing to draw.",
+  missing: "This row came from the fabric and has no setup code yet.",
+};
 
 declare global {
   interface HTMLElementTagNameMap {
