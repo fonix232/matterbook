@@ -401,7 +401,7 @@ Three things about it are not obvious, and all three are load-bearing:
 
 | Stage | Runs in | Why |
 | --- | --- | --- |
-| Capture, decode | Browser | `ha-qr-scanner`, already there |
+| Capture, decode | Browser | The panel's own decoder, already there — `ha-qr-scanner` is internal to the frontend, which is why there is one |
 | Homography, crop, averaging | Browser | 3×3 matrix maths and canvas; no dependency, no server load, works on the phone that took the photo |
 | Encode WebP, strip EXIF | Browser | `canvas.toBlob` re-encodes, which drops EXIF as a side effect |
 | Upload, store | Integration | One WebSocket command |
