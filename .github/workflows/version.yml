@@ -1,16 +1,14 @@
-# Runs only in the split-out repository (see ../../SPLIT.md).
-#
 # Cuts a release: work out the next version, stamp it into the manifest, tag
-# that, and publish.
+# that, and publish. See RELEASING.md.
 #
-# Two constraints shape how this works, and both are easy to trip over:
+# Two things about it are deliberate and look odd otherwise:
 #
-# 1. `main` here is the output of `git subtree split` in network-tools, so it
-#    must stay byte-identical to what that produces. A commit made by CI on
-#    `main` would make every future publish a non-fast-forward. So the version
-#    bump is committed *under the tag* and `main` is never pushed: the tagged
-#    commit sits one ahead of `main`, reachable only through the tag, and the
-#    release is built from it.
+# 1. The bump is committed on a detached HEAD and only the *tag* is pushed, so
+#    `main` never carries release bookkeeping: main is what was written, tags
+#    are what shipped. The cost is that main's manifest reads one version
+#    behind. (This started as a hard requirement — the repository was produced
+#    by `git subtree split` and a CI commit on main would have broken every
+#    later publish — and is now a choice.)
 #
 # 2. A tag pushed with GITHUB_TOKEN does not trigger other workflows — GitHub
 #    suppresses that to avoid recursion. Waiting for release.yml's `push: tags`
@@ -104,8 +102,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Detached on purpose: nothing here may land on main, which has to stay
-          # identical to what `git subtree split` produces in network-tools.
+          # Detached on purpose: the bump belongs to the tag, not to the branch.
           git checkout --detach
 
           python3 - <<'PY'
@@ -126,7 +123,7 @@ jobs:
           git commit -am "MatterBook $VERSION"
           git tag -a "$TAG" -m "MatterBook $VERSION"
 
-          # The tag only. Pushing the branch would break the mirror.
+          # The tag only; main keeps no release commits.
           git push origin "refs/tags/$TAG"
           echo "Pushed $TAG at $(git rev-parse --short HEAD), one commit ahead of main."
 

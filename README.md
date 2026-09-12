@@ -43,7 +43,9 @@ Download `matterbook.zip` from a release and unpack it into your configuration:
 unzip matterbook.zip -d /config/custom_components/matterbook/
 ```
 
-Or copy the directory straight out of this repository:
+Or copy the directory straight out of this repository — note that `main`'s
+manifest reads one version behind, because the version bump lives under the tag
+([RELEASING.md](RELEASING.md) explains why):
 
 ```bash
 scp -r custom_components/matterbook root@homeassistant:/config/custom_components/
@@ -52,10 +54,8 @@ scp -r custom_components/matterbook root@homeassistant:/config/custom_components
 Either way, restart Home Assistant and add **MatterBook** from
 *Settings → Devices & services → Add integration*.
 
-> Development happens here in `network-tools`; `fonix232/matterbook` is the
-> publishing mirror, produced by `git subtree split`. [SPLIT.md](SPLIT.md) is the
-> runbook for keeping the two in step, and explains why HACS cannot install from
-> a monorepo.
+> Releases are cut by the **Version** workflow; see [RELEASING.md](RELEASING.md)
+> for how that works and what ends up in the archive.
 
 ## Using it
 
