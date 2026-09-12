@@ -71,6 +71,18 @@ directory *is* the root.
    version, stamps it into the manifest, tags that, builds and publishes.
    `dry_run` prints the version it would use and stops.
 
+   Which to pick:
+
+   | | For |
+   | --- | --- |
+   | `patch` | Hotfixes and bug fixes. Nothing new. |
+   | `minor` | New features and other non-breaking changes. |
+   | `major` | Breaking changes, or a release big enough to mark as one. |
+
+   "Breaking" here means something an existing install notices: a column the
+   book no longer reads, an action or event renamed, an entity removed that
+   someone's automation refers to.
+
    Two things about it are worth knowing, because both look like bugs otherwise:
 
    * **The bump commit is not on `main`.** `main` has to stay byte-identical to
