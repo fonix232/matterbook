@@ -1,0 +1,136 @@
+# Runs only in the split-out repository (see ../../SPLIT.md).
+#
+# Cuts a release: work out the next version, stamp it into the manifest, tag
+# that, and publish.
+#
+# Two constraints shape how this works, and both are easy to trip over:
+#
+# 1. `main` here is the output of `git subtree split` in network-tools, so it
+#    must stay byte-identical to what that produces. A commit made by CI on
+#    `main` would make every future publish a non-fast-forward. So the version
+#    bump is committed *under the tag* and `main` is never pushed: the tagged
+#    commit sits one ahead of `main`, reachable only through the tag, and the
+#    release is built from it.
+#
+# 2. A tag pushed with GITHUB_TOKEN does not trigger other workflows — GitHub
+#    suppresses that to avoid recursion. Waiting for release.yml's `push: tags`
+#    trigger would therefore wait forever, so this calls release.yml directly.
+name: Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to increment
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+        required: true
+      dry_run:
+        description: Work out the next version and stop, without tagging
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.next.outputs.tag }}
+      version: ${{ steps.next.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          # Tags decide the current version, and a shallow clone has none.
+          fetch-depth: 0
+
+      - name: Work out the next version
+        id: next
+        run: |
+          set -euo pipefail
+
+          latest=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)
+          if [ -n "$latest" ]; then
+            current="${latest#v}"
+            echo "Latest tag: $latest"
+          else
+            # No releases yet: start from whatever the manifest carries.
+            current=$(python3 -c "import json;print(json.load(open('custom_components/matterbook/manifest.json'))['version'])")
+            echo "No tags yet; starting from the manifest version $current"
+          fi
+
+          if ! printf '%s' "$current" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Current version '$current' is not MAJOR.MINOR.PATCH."
+            exit 1
+          fi
+
+          IFS=. read -r major minor patch <<< "$current"
+          case "${{ inputs.bump }}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *) echo "::error::Unknown bump '${{ inputs.bump }}'"; exit 1 ;;
+          esac
+
+          version="${major}.${minor}.${patch}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Version"
+            echo
+            echo "\`$current\` → **\`$version\`** (${{ inputs.bump }})"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "::error::Tag v$version already exists."
+            exit 1
+          fi
+
+      - name: Tag it
+        if: ${{ !inputs.dry_run }}
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+          TAG: ${{ steps.next.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # Detached on purpose: nothing here may land on main, which has to stay
+          # identical to what `git subtree split` produces in network-tools.
+          git checkout --detach
+
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          path = Path("custom_components/matterbook/manifest.json")
+          manifest = json.loads(path.read_text())
+          manifest["version"] = os.environ["VERSION"]
+          # hassfest wants domain, name, then alphabetical; keep that intact.
+          ordered = {"domain": manifest.pop("domain"), "name": manifest.pop("name")}
+          ordered.update({key: manifest[key] for key in sorted(manifest)})
+          path.write_text(json.dumps(ordered, indent=2) + "\n")
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "MatterBook $VERSION"
+          git tag -a "$TAG" -m "MatterBook $VERSION"
+
+          # The tag only. Pushing the branch would break the mirror.
+          git push origin "refs/tags/$TAG"
+          echo "Pushed $TAG at $(git rev-parse --short HEAD), one commit ahead of main."
+
+  release:
+    needs: tag
+    if: ${{ !inputs.dry_run }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}

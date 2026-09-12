@@ -66,8 +66,27 @@ directory *is* the root.
    PR is merged, `validate.yml` passes `ignore: brands` to the HACS action.
    Remove that line once the brand is accepted.
 
-3. **Release.** Bump `version` in `custom_components/matterbook/manifest.json`,
-   commit, then:
+3. **Release.** Run the **Version** workflow from the Actions tab, pick
+   `patch`, `minor` or `major`, and it does the rest: works out the next
+   version, stamps it into the manifest, tags that, builds and publishes.
+   `dry_run` prints the version it would use and stops.
+
+   Two things about it are worth knowing, because both look like bugs otherwise:
+
+   * **The bump commit is not on `main`.** `main` has to stay byte-identical to
+     what `git subtree split` produces, or every future publish becomes a
+     non-fast-forward. So the workflow commits the manifest bump on a detached
+     HEAD, tags *that*, and pushes only the tag. The tagged commit sits one
+     ahead of `main` and is reachable through the tag alone. A consequence:
+     `main`'s manifest shows the previous version between releases, and **the
+     tags are the source of truth** for what has been released.
+   * **The tag cannot trigger `release.yml` on its own.** GitHub suppresses
+     workflow triggers for refs pushed with `GITHUB_TOKEN`, to stop runs
+     recursing. Waiting for the `push: tags` trigger would wait forever, so
+     Version calls `release.yml` directly as a reusable workflow.
+
+   Tagging by hand still works and still publishes — `release.yml` keeps its
+   `push: tags: v*` trigger:
 
    ```bash
    git tag v0.1.0 && git push origin v0.1.0
@@ -78,10 +97,6 @@ directory *is* the root.
    tag has no release yet so it creates one, and a release drafted in the UI
    already exists so it attaches the archive to it. Either way the run fails if
    `matterbook.zip` is not on the release at the end.
-
-   `release.yml` refuses to publish if the tag and the manifest disagree —
-   HACS reads the tag and Home Assistant reads the manifest, so a mismatch means
-   an install that reports the wrong version forever.
 
 4. **Install.** In HACS: *Custom repositories* → the repository URL, category
    *Integration*. Users then get updates through HACS like any other.

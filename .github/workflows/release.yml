@@ -9,6 +9,15 @@ on:
   push:
     tags:
       - 'v*'
+  # Called by version.yml, which creates the tag itself: a tag pushed with
+  # GITHUB_TOKEN never fires the `push` trigger above, so it has to call in here
+  # directly rather than wait for an event that will not arrive.
+  workflow_call:
+    inputs:
+      tag:
+        description: The tag to build and publish
+        type: string
+        required: true
   workflow_dispatch:
 
 permissions:
@@ -18,11 +27,19 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve the tag
+        id: target
+        run: echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.target.outputs.tag }}
 
       - name: Check the manifest agrees with the tag
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${TAG#v}"
           manifest=$(python3 -c "import json;print(json.load(open('custom_components/matterbook/manifest.json'))['version'])")
           if [ "$manifest" != "$version" ]; then
             echo "::error::manifest.json says $manifest but the tag says $version."
@@ -54,18 +71,19 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.target.outputs.tag }}
         run: |
           # A tag can arrive two ways: pushed from a clone, which fires this
           # workflow with no release yet, or created by "Draft a new release" in
           # the UI, which publishes the release first. Handle both, or the
           # second case fails with "release already exists" and ships no archive.
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "Release $GITHUB_REF_NAME exists; attaching the archive to it."
-            gh release upload "$GITHUB_REF_NAME" \
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists; attaching the archive to it."
+            gh release upload "$TAG" \
               "${{ runner.temp }}/matterbook.zip#matterbook.zip" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" \
-              --title "$GITHUB_REF_NAME" \
+            gh release create "$TAG" \
+              --title "$TAG" \
               --generate-notes \
               "${{ runner.temp }}/matterbook.zip#matterbook.zip"
           fi
@@ -73,8 +91,9 @@ jobs:
       - name: Confirm the archive is attached
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.target.outputs.tag }}
         run: |
           # HACS downloads this asset by name; a release without it installs
           # nothing, and the workflow would otherwise have exited green.
-          gh release view "$GITHUB_REF_NAME" --json assets \
+          gh release view "$TAG" --json assets \
             --jq '.assets[].name' | grep -qx 'matterbook.zip'
