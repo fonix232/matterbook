@@ -227,3 +227,53 @@ def async_credentials_state(hass: HomeAssistant) -> dict[str, bool]:
         "wifi": bool(getattr(info, "wifi_credentials_set", False)),
         "thread": bool(getattr(info, "thread_credentials_set", False)),
     }
+
+
+def _identify_endpoint(client: Any, node_id: int) -> int:
+    """Return the endpoint to send Identify to.
+
+    Endpoint 0 is the root node and is not what blinks. Most devices put
+    Identify on endpoint 1, but a multi-endpoint device (a two-gang switch, a
+    bridge) need not, so the node's own endpoint list is asked first. Every hop
+    here is into the Matter client's models, so a failure falls back to 1 rather
+    than turning "blink this" into a traceback.
+    """
+    try:
+        from chip.clusters import Objects as clusters  # noqa: PLC0415
+
+        node = client.get_node(node_id)
+        for endpoint_id, endpoint in sorted(node.endpoints.items()):
+            if endpoint_id != 0 and endpoint.has_cluster(clusters.Identify):
+                return int(endpoint_id)
+    except Exception as err:  # noqa: BLE001 - any failure here is not worth raising
+        _LOGGER.debug("Could not work out an Identify endpoint for node %s: %s", node_id, err)
+    return 1
+
+
+async def async_identify(hass: HomeAssistant, node_id: int, *, seconds: int) -> None:
+    """Ask a commissioned node to make itself obvious for a while.
+
+    Only a *commissioned* device can do this: Identify is a cluster command, and
+    a device that has not been commissioned has no fabric to accept one over.
+    For those the honest answer is still the human one — power-cycle the device
+    you mean and watch which row goes away and comes back.
+
+    Raises:
+        MatterUnavailable: the Matter integration or server could not be reached,
+            or the node refused the command.
+    """
+    from chip.clusters import Objects as clusters  # noqa: PLC0415
+
+    async with matter_client(hass) as client:
+        endpoint_id = _identify_endpoint(client, node_id)
+        try:
+            await client.send_device_command(
+                node_id=node_id,
+                endpoint_id=endpoint_id,
+                command=clusters.Identify.Commands.Identify(identifyTime=seconds),
+            )
+        except Exception as err:  # MatterError subclasses plus transport errors
+            raise MatterUnavailable(
+                f"Node {node_id} would not identify on endpoint {endpoint_id}: "
+                f"{err or type(err).__name__}"
+            ) from err

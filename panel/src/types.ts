@@ -71,6 +71,10 @@ export interface BookEntry {
    * cannot carry an authorisation header and the signature expires.
    */
   qr_url: string | null;
+  /** Filename of the photographed label, or empty when there is none. */
+  label_image: string;
+  /** A signed, short-lived URL for that photograph, on the same terms. */
+  label_url: string | null;
 }
 
 /** A device currently advertising that it is commissionable. */

@@ -92,6 +92,14 @@ export const sharedStyles = css`
     font-size: 0.85em;
   }
 
+  /* A code being read aloud off a screen, possibly across a room. */
+  code.revealed {
+    font-size: 1.4rem;
+    letter-spacing: 0.06em;
+    user-select: all;
+    word-break: break-all;
+  }
+
   .muted {
     color: var(--secondary-text-color, #727272);
   }
@@ -172,6 +180,23 @@ export const sharedStyles = css`
     flex: 1;
   }
 
+  /* What a row offers to do with itself. Wraps rather than widening the table. */
+  .row-actions {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  button.link.danger {
+    color: var(--error-color, #db4437);
+  }
+
+  /* A row auto-pairing will skip. Legible, but plainly out of play. */
+  tr.disabled td {
+    opacity: 0.55;
+  }
+
   /* A heading sharing a row with controls keeps the row's rhythm, not its own. */
   .toolbar h2 {
     margin: 0;
@@ -248,6 +273,31 @@ export const sharedStyles = css`
   .field p {
     margin: 6px 0 0;
     font-size: 0.85rem;
+  }
+
+  /* A control with its explanation beside it, rather than above it. */
+  .checkline {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin: 8px 0;
+    font-size: 0.85rem;
+    color: var(--secondary-text-color, #727272);
+  }
+
+  .checkline input[type="range"] {
+    flex: 1;
+    min-width: 120px;
+    max-width: 260px;
+    accent-color: var(--primary-color, #03a9f4);
+  }
+
+  /* The label as it will be kept: big enough to see whether the crop took the
+     digits with it, which is the only question this preview has to answer. */
+  .label-image.preview {
+    width: 100%;
+    max-width: 320px;
+    height: auto;
   }
 
   .viewfinder {

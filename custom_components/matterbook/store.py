@@ -84,6 +84,14 @@ class MatterBookEntry:
 
     last_error: str = ""
 
+    label_image: str = ""
+    """Filename of the photographed label, under the labels directory.
+
+    The name is derivable from the id, so this column is really a record of
+    *whether* there is one — which saves a disk check per row on every push, and
+    leaves room for the variants the pipeline may keep later.
+    """
+
     @property
     def payload(self) -> SetupPayload:
         """Decode this row's setup code."""
@@ -399,6 +407,16 @@ def remove_entry(
     removed = entries.pop(index)
     write_entries(path, entries)
     return removed
+
+
+def set_entry_label(path: Path, entry_id: str, filename: str) -> MatterBookEntry:
+    """Point a row at its label image, or clear it with an empty name.
+
+    Separate from `update_entry` because the file on disk and the column have to
+    agree: the caller writes one and then the other, and a row pointing at a file
+    that is not there shows a broken picture to everyone who opens the panel.
+    """
+    return update_entry(path, entry_id, label_image=filename)
 
 
 def update_entry(path: Path, entry_id: str, **changes: Any) -> MatterBookEntry:

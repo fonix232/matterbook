@@ -87,17 +87,35 @@ REST, except for images (which cannot be fetched into an `<img>` any other way).
 | `matterbook/set_code` | Fills in an imported row's code, or replaces a wrong one |
 | `matterbook/options` | The settings, with the backend's defaults already filled in |
 | `matterbook/set_options` | Saves settings, which reloads the entry |
-| `matterbook/label/upload` | Stores a captured label image for an entry *(not built)* |
+| `matterbook/set_label` | Stores a photograph of a row's label, or clears it |
+| `matterbook/reveal` | Returns one row's setup code, unmasked |
+| `matterbook/identify` | Asks a paired row's device to blink |
 
-Every row in the subscription payload carries a signed URL for its **rendered**
-label, or `null` where the code has no honest QR. Signing per push rather than
-on request saves a round trip per picture; the URL is stable between pushes, for
-the reason under [The label pipeline](#the-label-pipeline).
+Every row in the subscription payload carries signed URLs for its **rendered**
+label and its **photographed** one, either `null` when there is none. Signing
+per push rather than on request saves a round trip per picture; the URLs are
+stable between pushes, for the reason under
+[The label pipeline](#the-label-pipeline).
 
-Codes are **masked in every payload**. The panel never receives a passcode, and
-therefore cannot leak one into a screenshot, a browser cache or a bug report.
-The one exception is deliberate: an explicit `matterbook/reveal` for a single
-entry, when someone needs to read a code out to another controller's app.
+### What "masked" is worth now
+
+Codes are masked in every payload, so a passcode cannot reach a screenshot, a
+browser cache or a bug report *as text*. That was once the whole story. It is
+not any more: for a row whose code is a QR payload, the panel now draws the code
+back into a scannable label and puts it on screen. Anyone looking at the panel
+can scan it.
+
+That is not a leak to be closed — it is the feature. A book of setup codes whose
+codes cannot be got at is a list of names. It is, though, the reason the panel is
+admin-only, and the reason the label endpoints check for an admin themselves
+rather than trusting that only the panel will call them.
+
+What masking still buys is narrower and real: codes stay out of the *text* the
+browser keeps, and the rows with no honest QR — a manual pairing code, a bare
+passcode — stay unreadable until someone asks. `matterbook/reveal` is that ask.
+It exists for exactly those rows, since they are the ones with no picture to
+scan, and every call is logged: a book of passcodes should be able to say when
+one was taken out of it.
 
 ### Why subscribe rather than poll
 
@@ -137,9 +155,21 @@ Identity strength is shown plainly, because it decides what MatterBook is
 allowed to do on its own: **exact** (a QR payload), **short** (a manual code),
 **none** (a bare passcode). A row that has spent its trial says so.
 
-Every row has **Edit**; a row imported from the fabric leads with **Add code**,
-which is the same dialog said differently. Both open the editor with the row's
-data already in it.
+The label is the photograph where a row has one, and the rendered code where it
+does not. The photograph wins because it *is* the label; the rendered code is
+only the part of it a machine reads.
+
+Every row has **Edit** — a row imported from the fabric leads with **Add code**,
+which is the same dialog said differently — and then, as plain links:
+
+* **Show code**, on any row that has one. See "What masking is worth", above.
+* **Identify**, on a row that is paired, to blink the device. Absent on the
+  others, because there is nothing to send the command over.
+* **Disable**, which leaves a row in the book but takes it out of auto-pairing.
+  A disabled row says so and is dimmed: still readable, plainly out of play.
+* **Delete**, confirmed, which takes the label photograph with it. Confirmed
+  because a code that exists only on a sticker in a loft is not recoverable
+  from a commissioned device — this can genuinely lose it.
 
 ### 2. Labels
 
@@ -181,16 +211,20 @@ devices, or a device could be several entries.
 > | ○ | `discriminator 3901` | — | esp-proxy-attic | −81 dBm |
 > | ○ | `discriminator 3999` | Nanoleaf | Home Assistant | −67 dBm |
 >
-> *[ Identify each one ]* *[ Pair with selected ]*
+> *[ Pair with selected ]*
 
 Two things make this usable rather than a numbers quiz:
 
 * **Signal and source** narrow it physically — the one heard by the hall proxy
   at −52 dBm is the one in the hall.
-* **Identify** is the honest answer to "I still can't tell". For an *already
-  commissioned* device the Identify cluster blinks it. For an uncommissioned one
-  there is no such command, so the fallback is human: power-cycle the device you
-  mean, watch which row disappears and comes back.
+* **Power-cycling** is the honest answer to "I still can't tell": switch the
+  device you mean off and on, and watch which row disappears and comes back.
+
+There is deliberately no *Identify* button here. Identify is a cluster command,
+and a device in pairing mode has no fabric to accept one over — every device on
+this screen is uncommissioned by definition. Identify belongs on a row that is
+already **paired**, where the question is which of two identical lamps this row
+turned out to be, and that is where the book offers it.
 
 Choosing a device calls `matterbook/pair` with both the entry and that device,
 which goes down the same path auto-pairing uses: the discriminator from the
@@ -288,45 +322,66 @@ viewport tall", and a page would have come out twice the height it should be.
 
 The goal is an archive of the **sticker as printed** — the code, the digits, the
 vendor's logo, the device ID some vendors print for exactly this reason — flat,
-cropped and legible. Not a regenerated QR: that would be sharper and useless.
+cropped and legible. Not a regenerated QR: that would be sharper and useless,
+because it is not the thing stuck to the device.
 
-### Rectify
+### Rectify *(built)*
 
-`QRCodeDetector.detect()` gives the code's four corners. Because a QR is known
-to be square, those four correspondences give a homography — which is applied to
-the **whole frame**, not just the code. The label comes along with it, flat and
-at the right aspect ratio.
+Both decoders report the code's four corners — `BarcodeDetector` as
+`cornerPoints`, jsQR as its four named corners, which come from the finder
+patterns and so give the code's own orientation rather than the photograph's.
 
-The by-product matters as much as the rectification: the homography fixes how
-many pixels one QR module is. Every later measurement is then expressed in
-**modules**, which makes the whole pipeline independent of how far away the
-photo was taken from.
+Because a QR is known to be square, those four correspondences give a
+homography, and it is applied to the **whole frame**, not just the code. The
+label comes along with it, flat and at the right aspect ratio.
+
+The by-product matters as much as the rectification: mapping the code onto a
+square of a fixed size fixes how many pixels one code-width is. Every label in
+the archive therefore comes out at the same effective resolution, and they look
+like a set however far away any one photograph was taken from.
+
+Two details that are easy to get wrong:
+
+* The **inverse** transform is fitted directly, by swapping the point lists.
+  Every destination pixel needs its source, and fitting backwards is both
+  cheaper and steadier than inverting a matrix that may be near-singular.
+* A degenerate corner set — three corners on a line, a code detected as a sliver
+  — returns nothing rather than a transform that maps the image to a point. The
+  photograph is then kept as taken, which is still a perfectly good label.
 
 A label carrying a second QR — a vendor app link, a serial — is why the code is
-decoded before it is trusted as the reference: only a payload starting `MT:`
-is the Matter code.
+decoded before it is trusted as the reference: only a payload starting `MT:` is
+the Matter code.
 
-### Crop
+### Crop *(built, but not the clever version)*
 
-Three regions, unioned, then 10% padding:
+The original design here was three regions unioned — the code from the detector,
+the printed digits found by a morphological gradient and horizontal dilation,
+and the sticker border found by Canny plus `findContours` — then 10% padding.
 
-1. **The code**, from the detector.
-2. **The printed digits**: a morphological gradient followed by horizontal
-   dilation merges glyphs into text lines; keep the lines whose height and
-   distance from the code are plausible *in modules*. Searching by module rather
-   than pixel is also what lets this work when the digits are set below the code
-   rather than beside it.
-3. **The sticker border**: Canny plus `findContours`, keeping quads that
-   *contain* the code, and taking the smallest one that is meaningfully larger
-   than the code itself. That last qualifier is load-bearing: the code's quiet
-   zone is often a printed white box, and "largest contour containing the QR"
-   picks out the device casing instead.
+That is the right algorithm and it is not what shipped, because all three of
+those are OpenCV, and OpenCV does not belong in a panel bundle. What shipped is
+the design's own **fallback**, generalised: keep the code plus a margin
+expressed in code-widths.
 
-If no border is found — borderless print, dark label, a sticker that bleeds into
-the housing — fall back to the union of code and digits, still padded. Including
-a little casing is a much smaller failure than guillotining the logo.
+The difference is made up by the person holding the camera. The margin is a
+slider, the rectified crop is on screen before anything is stored, and *keep the
+whole photograph* is one click away. A human confirming a crop is worth more
+than a clever one they never see — and a crop that guesses wrong quietly
+guillotines the vendor's logo off someone's archive.
 
-### Improve
+(Margins are in code-widths rather than the design's modules because the module
+count depends on the QR version, and nothing here needs to know it: a fraction
+of the code's width normalises exactly as well for framing.)
+
+Cost is why the output is capped at 1400px square: every output pixel is an
+inverse projection and a bilinear sample in JavaScript, so the work is the area.
+Past the cap the code-width shrinks instead, which costs resolution and keeps
+the framing. Bilinear rather than nearest because a rectified label is nearly
+always being shrunk or rotated a little, and nearest turns the printed digits
+into stair-steps exactly where legibility is the point.
+
+### Improve *(not built)*
 
 Sharpness comes from frames, not filters:
 
@@ -340,7 +395,7 @@ Sharpness comes from frames, not filters:
 Upscaling models are optional polish on top, and are the only part that wants an
 add-on.
 
-### Cross-check
+### Cross-check *(not built)*
 
 OCR the digits and compare them with the decoded payload's passcode. Two
 independent readings of one secret: agreement is strong evidence both are right.
@@ -351,24 +406,45 @@ is *detectable*, and usually correctable by trying single-digit substitutions
 until the checksum validates. A damaged QR with legible digits still yields a
 usable entry, and vice versa.
 
-### Store
+What did survive from this idea without the OCR: a photograph that decodes fills
+the code field if it is still empty. Someone who photographed the sticker has
+already given us the code, and asking them to scan the same sticker twice is
+asking them to do our arithmetic.
 
-`config/matterbook/labels/<entry_id>.webp`, beside the book, referenced by a
-`label_image` column. WebP at quality ~90, normalised to a fixed
-modules-per-pixel so every label in the archive is the same effective DPI and
-they look like a set.
+### Store *(built)*
 
-Optionally the original frame as `<entry_id>.original.webp`, for reprocessing
-later when the pipeline improves.
+`config/matterbook/labels/<entry_id>.webp`, beside the book, referenced by the
+`label_image` column. WebP at quality 90, normalised by the rectification to a
+fixed code-widths-per-pixel so every label in the archive is the same effective
+DPI.
 
-Two rules:
+Four rules, all of them load-bearing:
 
 * **EXIF is stripped before writing.** Phone photos carry GPS, and a book of
   device labels tagged with the coordinates of the house they are in is not
-  something to put in a backup.
+  something to put in a backup. `canvas.toBlob` re-encodes, which drops it as a
+  side effect — so this is a property of doing the geometry in the browser, not
+  a step that can be forgotten.
 * **Label images are as sensitive as the book.** The passcode is legible in the
-  picture. They must never go under `config/www/`, which is served without
-  authentication.
+  picture. They live beside the book, never under `config/www/`, which is served
+  without authentication, and they are written 0600 like the book is.
+* **The type comes from the bytes, not from the claim.** The upload is sniffed
+  and the extension follows what it actually is. Storing something whose type is
+  not what the view serves it as is how a picture endpoint turns into a way to
+  serve arbitrary content.
+* **A filename out of the book can only name a file in the labels directory.**
+  The book is a CSV a human is invited to edit, and this feeds an HTTP view;
+  `../../secrets.yaml` is the obvious way for that invitation to go wrong.
+
+The file is written before the column and the old one removed after it, so the
+order of failures is the survivable one: an orphaned file wastes disk, while a
+column pointing at a file that is not there is a broken picture in everyone's
+panel. Deleting a row takes its photograph with it — otherwise a picture of a
+setup code outlives the row that explained what it was a picture of.
+
+`toBlob` falls back to PNG silently for a type it does not know, which would
+triple the size of a photograph, so the result is checked rather than trusted:
+WebP where the browser has it, JPEG where it does not.
 
 Serving them needs one wrinkle: `<img src>` cannot send an auth header. The HA
 idiom is a signed path — the integration signs a URL with
@@ -402,7 +478,8 @@ Three things about it are not obvious, and all three are load-bearing:
 | Stage | Runs in | Why |
 | --- | --- | --- |
 | Capture, decode | Browser | The panel's own decoder, already there — `ha-qr-scanner` is internal to the frontend, which is why there is one |
-| Homography, crop, averaging | Browser | 3×3 matrix maths and canvas; no dependency, no server load, works on the phone that took the photo |
+| Homography, crop | Browser | 3×3 matrix maths and canvas; no dependency, no server load, works on the phone that took the photo |
+| Border finding, averaging | Browser *(not built)* | The same argument, but it needs OpenCV-grade edge and contour work; the confirmed-crop control stands in for it |
 | Encode WebP, strip EXIF | Browser | `canvas.toBlob` re-encodes, which drops EXIF as a side effect |
 | Upload, store | Integration | One WebSocket command |
 | OCR, upscaling | Add-on (optional) | OpenCV and models do not belong in an integration |
@@ -437,5 +514,11 @@ user's theme, including dark mode, without knowing anything about it.
 3. Capture: scan a code, add a row, correct an existing one. *(done)*
 4. Rendered labels — the entry's own payload drawn back into a scannable code —
    in the book and in a gallery, and a settings page. *(done)*
-5. Photographed labels: rectify, crop, store, and show beside the rendered one.
-6. Optional add-on: OCR cross-check and upscaling.
+5. Photographed labels: rectify, crop, store, show. Reveal, identify, delete and
+   disable on a row. *(done)*
+6. The crop the design actually wants: find the printed digits and the sticker
+   border rather than asking the person to frame it. Needs edge and contour work
+   the browser has no library for, so it is a real piece of work rather than a
+   loose end.
+7. Multi-frame averaging and flat-field correction.
+8. Optional add-on: OCR cross-check and upscaling.

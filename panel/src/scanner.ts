@@ -21,13 +21,32 @@
 
 import jsQR from "jsqr";
 
+export interface Point {
+  x: number;
+  y: number;
+}
+
 export interface ScanResult {
   text: string;
   decoder: "native" | "jsqr";
+  /**
+   * The code's four corners in the source image, clockwise from its top-left.
+   *
+   * This is what makes the label pipeline possible: four correspondences on a
+   * shape known to be square give a homography, which flattens the whole
+   * photograph, not just the code. Absent when a decoder does not report them.
+   */
+  corners?: Point[];
+}
+
+/** A decode together with the pixels it came from, for the label pipeline. */
+export interface ScanCapture {
+  result: ScanResult | null;
+  canvas: HTMLCanvasElement;
 }
 
 interface BarcodeDetectorLike {
-  detect(source: CanvasImageSource): Promise<{ rawValue: string }[]>;
+  detect(source: CanvasImageSource): Promise<{ rawValue: string; cornerPoints?: Point[] }[]>;
 }
 
 type BarcodeDetectorCtor = new (options?: { formats?: string[] }) => BarcodeDetectorLike;
@@ -53,16 +72,37 @@ export function cameraAvailable(): boolean {
 
 /** Decode a QR code from an image element or canvas. */
 export async function decodeImage(source: HTMLImageElement): Promise<ScanResult | null> {
+  return (await captureImage(source)).result;
+}
+
+/**
+ * Decode, and keep the pixels.
+ *
+ * A photograph is worth more than the string in it — it is the label — so this
+ * hands back the canvas as well. Downscaled first: phone cameras produce far
+ * more pixels than a sticker needs, and every later step is per-pixel work.
+ */
+export async function captureImage(source: HTMLImageElement): Promise<ScanCapture> {
+  const scale = Math.min(1, MAX_CAPTURE_EDGE / Math.max(source.naturalWidth, source.naturalHeight));
   const canvas = document.createElement("canvas");
-  canvas.width = source.naturalWidth;
-  canvas.height = source.naturalHeight;
+  canvas.width = Math.round(source.naturalWidth * scale);
+  canvas.height = Math.round(source.naturalHeight * scale);
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) {
-    return null;
+    return { result: null, canvas };
   }
-  context.drawImage(source, 0, 0);
-  return decodeCanvas(canvas, context);
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return { result: await decodeCanvas(canvas, context), canvas };
 }
+
+/**
+ * The longest edge a captured photograph is kept at.
+ *
+ * 2000px leaves a sticker filling a third of the frame around 600px across,
+ * which is more than enough to read and to re-scan, and keeps the homography
+ * and the re-encode quick on a phone.
+ */
+const MAX_CAPTURE_EDGE = 2000;
 
 async function decodeCanvas(
   canvas: HTMLCanvasElement,
@@ -73,7 +113,11 @@ async function decodeCanvas(
     try {
       const [found] = await detector.detect(canvas);
       if (found?.rawValue) {
-        return { text: found.rawValue, decoder: "native" };
+        return {
+          text: found.rawValue,
+          decoder: "native",
+          corners: found.cornerPoints?.length === 4 ? found.cornerPoints : undefined,
+        };
       }
     } catch {
       // Fall through to jsQR: some implementations throw on odd frame sizes.
@@ -86,17 +130,32 @@ async function decodeCanvas(
   }
   const image = context.getImageData(0, 0, width, height);
   const found = jsQR(image.data, width, height, { inversionAttempts: "attemptBoth" });
-  return found?.data ? { text: found.data, decoder: "jsqr" } : null;
+  if (!found?.data) {
+    return null;
+  }
+  const { topLeftCorner, topRightCorner, bottomRightCorner, bottomLeftCorner } = found.location;
+  return {
+    text: found.data,
+    decoder: "jsqr",
+    // jsQR names its corners from the finder patterns, so this order is the
+    // code's own orientation rather than the photograph's.
+    corners: [topLeftCorner, topRightCorner, bottomRightCorner, bottomLeftCorner],
+  };
 }
 
 /** Decode a QR code from a photograph the user picked or took. */
 export async function decodeFile(file: File): Promise<ScanResult | null> {
+  return (await captureFile(file)).result;
+}
+
+/** Decode a photograph and keep its pixels, for the label pipeline. */
+export async function captureFile(file: File): Promise<ScanCapture> {
   const url = URL.createObjectURL(file);
   try {
     const image = new Image();
     image.src = url;
     await image.decode();
-    return await decodeImage(image);
+    return await captureImage(image);
   } finally {
     URL.revokeObjectURL(url);
   }

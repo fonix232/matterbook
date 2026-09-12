@@ -11,14 +11,19 @@ import { customElement, property, state } from "lit/decorators.js";
 import {
   addEntry,
   getOptions,
+  identify,
   importFromMatter,
   pairEntry,
+  removeEntry,
+  revealCode,
   scan,
   setCode,
+  setLabel,
   setOptions,
   subscribeMatterBook,
   updateEntry,
 } from "./api";
+import { toBase64 } from "./label";
 import { panelStyles } from "./styles";
 import type {
   BookEntry,
@@ -28,7 +33,8 @@ import type {
   MatterBookState,
 } from "./types";
 import "./views/book-view";
-import type { EditEntryRequest } from "./views/book-view";
+import type { EntryAction } from "./views/book-view";
+import "./views/dialog";
 import "./views/devices-view";
 import type { ResolveRequest } from "./views/devices-view";
 import "./views/entry-dialog";
@@ -70,6 +76,8 @@ export class MatterBookPanel extends LitElement {
   @state() private _resolving?: ResolveRequest;
   @state() private _editing?: Editing;
   @state() private _options?: MatterBookOptions;
+  /** A code the user asked to see, held until they dismiss it. */
+  @state() private _revealed?: { entryId: string; code: string };
   @state() private _optionsSaved = "";
 
   /**
@@ -154,6 +162,36 @@ export class MatterBookPanel extends LitElement {
         ${this._resolving ? this._renderResolve() : this._renderMain()}
       </div>
       ${this._editing ? this._renderDialog() : nothing}
+      ${this._revealed ? this._renderRevealed() : nothing}
+    `;
+  }
+
+  /**
+   * Show one code, once, in front of everything else.
+   *
+   * A code on the page behind other work is a code left on a screen. This has
+   * to be dismissed, which is the smallest thing that makes reading one out a
+   * deliberate act with an end to it.
+   */
+  private _renderRevealed(): TemplateResult {
+    const revealed = this._revealed!;
+    const entry = this._entry(revealed.entryId);
+    return html`
+      <matterbook-dialog @matterbook-cancel=${() => (this._revealed = undefined)}>
+        <div class="card flush">
+          <h2>Setup code</h2>
+          <p class="muted">${entry?.name || "This entry"}</p>
+          <p><code class="revealed">${revealed.code}</code></p>
+          <p class="muted">
+            This is the whole secret: anyone holding it can commission the device.
+            It is on screen until you close this.
+          </p>
+          <div class="toolbar">
+            <div class="spacer"></div>
+            <button @click=${() => (this._revealed = undefined)}>Done</button>
+          </div>
+        </div>
+      </matterbook-dialog>
     `;
   }
 
@@ -220,7 +258,7 @@ export class MatterBookPanel extends LitElement {
         <matterbook-gallery-view
           .entries=${state.entries}
           .busy=${this._saving}
-          @matterbook-edit-entry=${this._onEditEntry}
+          @matterbook-entry-action=${this._onEntryAction}
         ></matterbook-gallery-view>
       `;
     }
@@ -229,7 +267,7 @@ export class MatterBookPanel extends LitElement {
       <matterbook-book-view
         .entries=${state.entries}
         .busy=${this._saving}
-        @matterbook-edit-entry=${this._onEditEntry}
+        @matterbook-entry-action=${this._onEntryAction}
       ></matterbook-book-view>
       ${state.ambiguous.length > 0 ? this._renderAmbiguityHint(state) : nothing}
     `;
@@ -307,6 +345,7 @@ export class MatterBookPanel extends LitElement {
       area: entry?.area ?? "",
       notes: entry?.notes ?? "",
       existingCode: entry?.code ?? "",
+      labelUrl: entry?.label_url ?? null,
       // Editing has an answer to the chooser's question already: this row.
       skipChooser: entry !== undefined,
     };
@@ -344,10 +383,106 @@ export class MatterBookPanel extends LitElement {
     this._editing = { message: "", isError: false };
   }
 
-  private _onEditEntry(event: CustomEvent<EditEntryRequest>): void {
+  /**
+   * One handler for everything a row offers.
+   *
+   * The two views that list entries raise the same event, so the book and the
+   * gallery cannot drift apart on what a row can do.
+   */
+  private async _onEntryAction(event: CustomEvent<EntryAction>): Promise<void> {
+    const { action, entryId } = event.detail;
     this._error = undefined;
     this._notice = undefined;
-    this._editing = { entryId: event.detail.entryId, message: "", isError: false };
+
+    if (action === "edit") {
+      this._editing = { entryId, message: "", isError: false };
+      return;
+    }
+    if (action === "reveal") {
+      await this._reveal(entryId);
+      return;
+    }
+    if (action === "identify") {
+      await this._identify(entryId);
+      return;
+    }
+    if (action === "toggle") {
+      await this._toggleEnabled(entryId);
+      return;
+    }
+    await this._remove(entryId);
+  }
+
+  /**
+   * Read a code out of the book.
+   *
+   * Worth doing deliberately rather than showing every code in the table: the
+   * rendered label already puts the QR rows on screen to be scanned, so what is
+   * left is the rows that have no picture — and those are the ones where the
+   * digits are the only way to give the code to another app.
+   */
+  private async _reveal(entryId: string): Promise<void> {
+    try {
+      const { code } = await revealCode(this.hass, entryId);
+      this._revealed = { entryId, code };
+    } catch (err) {
+      this._error = `That code could not be read: ${errorText(err)}`;
+    }
+  }
+
+  private async _identify(entryId: string): Promise<void> {
+    try {
+      const { seconds } = await identify(this.hass, entryId);
+      this._notice = `Asked the device to identify itself for ${seconds} seconds.`;
+    } catch (err) {
+      this._error = `Identify failed: ${errorText(err)}`;
+    }
+  }
+
+  private async _toggleEnabled(entryId: string): Promise<void> {
+    const entry = this._entry(entryId);
+    if (!entry) {
+      return;
+    }
+    this._saving = true;
+    try {
+      await updateEntry(this.hass, entryId, { enabled: !entry.enabled });
+    } catch (err) {
+      this._error = `That row could not be changed: ${errorText(err)}`;
+    } finally {
+      this._saving = false;
+    }
+  }
+
+  /**
+   * Delete a row.
+   *
+   * Confirmed, because a setup code that is only on a sticker in a loft is not
+   * recoverable from a commissioned device — deleting the row can genuinely
+   * lose it. The backend takes the label photograph with it.
+   */
+  private async _remove(entryId: string): Promise<void> {
+    const entry = this._entry(entryId);
+    if (!entry) {
+      return;
+    }
+    const confirmed = globalThis.confirm(
+      `Delete ${entry.name || "this entry"} from the book?\n\n` +
+        "Its setup code and label photograph go with it. A commissioned device " +
+        "cannot give its code back, so if the sticker is gone this cannot be undone.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    this._saving = true;
+    try {
+      await removeEntry(this.hass, entryId);
+    } catch (err) {
+      this._error = `That row could not be deleted: ${errorText(err)}`;
+    } finally {
+      this._saving = false;
+    }
   }
 
   private _closeDialog(): void {
@@ -363,7 +498,7 @@ export class MatterBookPanel extends LitElement {
    * the row exactly as it was rather than half-renamed.
    */
   private async _onCodeEntered(event: CustomEvent<CodeEntryResult>): Promise<void> {
-    const { code, name, area, notes } = event.detail;
+    const { code, name, area, notes, label } = event.detail;
     const editing = this._editing;
     if (!editing) {
       return;
@@ -372,16 +507,22 @@ export class MatterBookPanel extends LitElement {
     this._saving = true;
     this._error = undefined;
     try {
-      if (editing.entryId) {
-        const existing = this._entry(editing.entryId);
+      let entryId = editing.entryId;
+      if (entryId) {
+        const existing = this._entry(entryId);
         if (code) {
           // Replacing is explicit: a row that already has a code only changes it
           // because someone asked to, never as a side effect of a rename.
-          await setCode(this.hass, editing.entryId, code, Boolean(existing?.code));
+          await setCode(this.hass, entryId, code, Boolean(existing?.code));
         }
-        await updateEntry(this.hass, editing.entryId, { name, area, notes });
+        await updateEntry(this.hass, entryId, { name, area, notes });
       } else {
-        await addEntry(this.hass, { code, name, area, notes });
+        entryId = (await addEntry(this.hass, { code, name, area, notes })).id;
+      }
+      // Last, and only if something changed: the row has to exist to hang a
+      // picture on, and a rejected code should not leave a photograph behind.
+      if (label !== undefined) {
+        await setLabel(this.hass, entryId, label === null ? null : await toBase64(label));
       }
       this._editing = undefined;
     } catch (err) {

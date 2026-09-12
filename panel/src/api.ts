@@ -130,3 +130,34 @@ export function setOptions(
 ): Promise<MatterBookOptions> {
   return hass.callWS<MatterBookOptions>({ type: "matterbook/set_options", options });
 }
+
+/**
+ * Read one row's setup code, unmasked.
+ *
+ * The deliberate exception to masking. It is what the rows with no scannable
+ * label need: a manual pairing code and a bare passcode are digits, so there is
+ * no picture to scan off the screen and reading the number out is the only way
+ * to hand it to another controller's app. The backend logs every call.
+ */
+export function revealCode(hass: HomeAssistant, entryId: string): Promise<{ code: string }> {
+  return hass.callWS<{ code: string }>({ type: "matterbook/reveal", entry_id: entryId });
+}
+
+/**
+ * Ask a paired row's device to make itself obvious.
+ *
+ * Only works once a device is commissioned — Identify is a cluster command, and
+ * an uncommissioned device has no fabric to accept one over.
+ */
+export function identify(hass: HomeAssistant, entryId: string): Promise<{ seconds: number }> {
+  return hass.callWS<{ seconds: number }>({ type: "matterbook/identify", entry_id: entryId });
+}
+
+/** Store a photograph of a row's label, or clear it by passing `null`. */
+export function setLabel(
+  hass: HomeAssistant,
+  entryId: string,
+  image: string | null,
+): Promise<BookEntry> {
+  return hass.callWS<BookEntry>({ type: "matterbook/set_label", entry_id: entryId, image });
+}

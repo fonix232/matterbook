@@ -66,13 +66,40 @@ and can commission devices onto your fabric.
 
 Everything about entries happens here.
 
-* **Add entry** — scan the QR code with the camera, photograph the label, or
-  type the code. Name and area are filled in on the same screen and applied to
-  the device once it pairs.
+* **Add entry** opens a dialog on three choices: take a photo, choose one you
+  already have, or type the code in. Name, area and notes are on the same
+  screen, and applied to the device once it pairs.
 * **Import from Matter** — see below.
-* **change** / **Add code** on a row — the same scanner, pointed at an entry
-  that already exists, for correcting a mistyped code or filling in an imported
-  row once you find its sticker.
+* **Edit** on a row (or **Add code**, on an imported row) opens the same dialog
+  with that row's data in it — for correcting a mistyped code, filling in a
+  sticker you have finally found, or just renaming something.
+* **Show code** reads a code back out of the book. Every call is logged.
+* **Identify** blinks a device that is already paired, for telling two identical
+  lamps apart. A device still in pairing mode cannot do this — power-cycle the
+  one you mean and watch which row disappears and comes back.
+* **Disable** leaves a row in the book but takes it out of auto-pairing;
+  **Delete** removes it, and its label photograph, after asking.
+
+The **Labels** page is the same book as a wall of stickers, which is usually how
+you recognise a device. Each row shows its photograph where it has one, and the
+code drawn back into a scannable QR where it does not.
+
+### Photographing a label
+
+Adding or editing a row offers to keep a picture of the sticker — the printed
+digits, the vendor's logo, the device ID some vendors put there for exactly this
+reason.
+
+The code's four corners give a homography, which flattens the whole photograph,
+not just the code, and fixes every label in the archive at the same effective
+resolution. Where to *stop* is yours: a slider sets how much around the code to
+keep, the result is on screen before anything is stored, and you can keep the
+whole photograph instead. A photograph that decodes also fills in the code field
+if you have not typed one.
+
+Pictures are re-encoded in the browser, which is what strips the GPS tag a phone
+attaches, and stored beside the book — never under `config/www/`, which is
+served without authentication.
 
 Scanning uses the browser's own barcode reader where there is one, and a
 bundled decoder everywhere else, so it works on iOS too. Two things to know:
@@ -164,8 +191,8 @@ new install.
 The book is a CSV, written atomically and `0600`:
 
 ```csv
-id,name,code,vendor_id,product_id,discriminator,short_discriminator,serial_number,unique_id,area,notes,enabled,status,node_id,paired_at,last_attempt_at,attempt_count,trial_used,last_error
-a1b2c3d4e5f6,Kitchen ceiling,MT:Y.K9042C00KA0648G00,65521,32768,3840,15,,,Kitchen,behind the trim,true,paired,12,2026-09-11T09:14:02+00:00,2026-09-11T09:14:02+00:00,0,false,
+id,name,code,vendor_id,product_id,discriminator,short_discriminator,serial_number,unique_id,area,notes,enabled,status,node_id,paired_at,last_attempt_at,attempt_count,trial_used,last_error,label_image
+a1b2c3d4e5f6,Kitchen ceiling,MT:Y.K9042C00KA0648G00,65521,32768,3840,15,,,Kitchen,behind the trim,true,paired,12,2026-09-11T09:14:02+00:00,2026-09-11T09:14:02+00:00,0,false,,a1b2c3d4e5f6.webp
 ```
 
 Edit it outside Home Assistant if you like — then call
@@ -180,7 +207,13 @@ knowing exactly which device it belongs to.
 > device while it is uncommissioned. Treat the file like `secrets.yaml`: keep it
 > out of git, out of shared backups, and off any share you would not put your
 > Home Assistant credentials on. MatterBook masks codes in entity attributes,
-> events, diagnostics and logs, but the file itself is the real thing.
+> events, diagnostics and logs, but the file itself is the real thing — and so
+> is everything in `labels/`, since a photograph of a sticker shows the passcode
+> as printed.
+>
+> The panel is admin-only for the same reason. It draws QR-payload rows back
+> into scannable codes so you can commission from your phone, which means anyone
+> looking at the screen can scan them. That is what a book of codes is for.
 
 ## Options
 

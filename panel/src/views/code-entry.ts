@@ -15,6 +15,8 @@ import { customElement, property, query, state } from "lit/decorators.js";
 
 import { CameraScanner, cameraAvailable, decodeFile } from "../scanner";
 import { sharedStyles } from "../styles";
+import "./label-capture";
+import type { LabelChange } from "./label-capture";
 
 export interface CodeEntryResult {
   /** Empty when editing and the code was left alone. */
@@ -22,6 +24,8 @@ export interface CodeEntryResult {
   name: string;
   area: string;
   notes: string;
+  /** A new label photograph, `null` to remove one, `undefined` to leave it. */
+  label: Blob | null | undefined;
 }
 
 @customElement("matterbook-code-entry")
@@ -49,10 +53,13 @@ export class MatterBookCodeEntry extends LitElement {
   @property() public name = "";
   @property() public area = "";
   @property() public notes = "";
+  /** A signed URL for the label photograph already on this row, if any. */
+  @property() public labelUrl: string | null = null;
 
   @state() private _scanning = false;
   @state() private _message?: string;
   @state() private _decodedBy?: string;
+  @state() private _label: Blob | null | undefined = undefined;
 
   @query("video") private _video?: HTMLVideoElement;
   @query("#code") private _codeField?: HTMLInputElement;
@@ -115,6 +122,13 @@ export class MatterBookCodeEntry extends LitElement {
         ${this._scanning ? this._renderCamera() : nothing}
         ${this._renderCodeField()}
         ${this._renderCodeActions()}
+
+        <matterbook-label-capture
+          .existingUrl=${this.labelUrl}
+          .busy=${this.busy}
+          @matterbook-label-changed=${this._onLabel}
+        ></matterbook-label-capture>
+
         ${this._renderDetails()}
 
         <div class="toolbar">
@@ -278,6 +292,22 @@ export class MatterBookCodeEntry extends LitElement {
     }
   }
 
+  /**
+   * A photographed label often carries the code as well.
+   *
+   * If the field is still empty, fill it: someone who photographed the sticker
+   * to archive it has already given us the code, and asking them to scan the
+   * same sticker twice is asking them to do our arithmetic.
+   */
+  private _onLabel(event: CustomEvent<LabelChange>): void {
+    this._label = event.detail.blob;
+    const code = event.detail.code;
+    if (code && !this.code.trim() && !this.existingCode) {
+      this.code = code;
+      this._decodedBy = "photo";
+    }
+  }
+
   private _save(): void {
     const code = (this._codeField?.value ?? this.code).trim();
     if (this.requireCode && !code) {
@@ -291,6 +321,7 @@ export class MatterBookCodeEntry extends LitElement {
           name: this._nameField?.value.trim() ?? "",
           area: this._areaField?.value.trim() ?? "",
           notes: this._notesField?.value.trim() ?? "",
+          label: this._label,
         },
         bubbles: true,
         composed: true,

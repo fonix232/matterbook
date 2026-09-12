@@ -47,6 +47,7 @@ from .const import (
     EVENT_TRIAL,
 )
 from .importer import async_collect_candidates
+from .labels import remove_label, write_label
 from .matching import (
     SOURCE_MATTER_SERVER,
     DiscoveredDevice,
@@ -58,6 +59,7 @@ from .matching import (
 from .pairing_code import InvalidSetupCode, qr_payload_for
 from .store import (
     MatterBookEntry,
+    MatterBookError,
     add_entry,
     add_imported_entry,
     mark_failed,
@@ -66,6 +68,7 @@ from .store import (
     read_entries,
     remove_entry,
     set_entry_code,
+    set_entry_label,
     update_entry,
 )
 
@@ -230,12 +233,71 @@ class MatterBookCoordinator(DataUpdateCoordinator[MatterBookData]):
     async def async_remove_entry(
         self, *, row: int | None = None, entry_id: str | None = None
     ) -> MatterBookEntry:
-        """Remove a row, then re-read the book."""
+        """Remove a row and its label, then re-read the book."""
         removed = await self.hass.async_add_executor_job(
             lambda: remove_entry(self.csv_path, row=row, entry_id=entry_id)
         )
+        if removed.label_image:
+            # Otherwise a photograph of a setup code outlives the row that
+            # explained what it was a photograph of.
+            await self.hass.async_add_executor_job(
+                partial(remove_label, self.label_dir, removed.label_image)
+            )
         await self.async_load_book()
         return removed
+
+    async def async_set_label(self, entry_id: str, data: bytes | None) -> MatterBookEntry:
+        """Store a row's label photograph, or clear it when given nothing.
+
+        The file is written before the column and removed after it, so the order
+        of failures is the survivable one: an orphaned file wastes disk, while a
+        column pointing at a file that is not there is a broken picture in
+        everyone's panel.
+
+        Raises:
+            LabelError: the bytes are not an image MatterBook stores.
+            MatterBookError: there is no such row.
+        """
+        entry = next((item for item in self.data.entries if item.id == entry_id), None)
+        if entry is None:
+            raise MatterBookError(f"No MatterBook entry with id {entry_id}")
+
+        previous = entry.label_image
+        if data is None:
+            updated = await self.hass.async_add_executor_job(
+                partial(set_entry_label, self.csv_path, entry_id, "")
+            )
+        else:
+            filename = await self.hass.async_add_executor_job(
+                partial(write_label, self.label_dir, entry_id, data)
+            )
+            updated = await self.hass.async_add_executor_job(
+                partial(set_entry_label, self.csv_path, entry_id, filename)
+            )
+            previous = previous if previous != filename else ""
+
+        if previous:
+            await self.hass.async_add_executor_job(
+                partial(remove_label, self.label_dir, previous)
+            )
+        await self.async_load_book()
+        return updated
+
+    async def async_identify(self, entry: MatterBookEntry, *, seconds: int = 15) -> None:
+        """Make a paired row's device blink.
+
+        Only a commissioned device can be asked: Identify is a cluster command,
+        and an uncommissioned one has no fabric to accept it over.
+
+        Raises:
+            matter_link.MatterUnavailable: the row is not paired, or the node refused.
+        """
+        if entry.node_id is None:
+            raise matter_link.MatterUnavailable(
+                f"{entry.name or entry.id} is not commissioned, so it has no Identify command. "
+                "Power-cycle the device instead and watch which row goes away and comes back."
+            )
+        await matter_link.async_identify(self.hass, entry.node_id, seconds=seconds)
 
     # ----- scanning --------------------------------------------------------
 

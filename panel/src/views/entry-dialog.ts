@@ -29,6 +29,8 @@ export interface EntryDialogTarget {
   notes: string;
   /** The masked code already on the row, if it has one. */
   existingCode: string;
+  /** A signed URL for the label photograph on the row, if it has one. */
+  labelUrl: string | null;
   /** Editing goes straight to the form: the row's data is the point. */
   skipChooser: boolean;
 }
@@ -141,6 +143,7 @@ export class MatterBookEntryDialog extends LitElement {
         .area=${target.area}
         .notes=${target.notes}
         .existingCode=${target.existingCode}
+        .labelUrl=${target.labelUrl}
         .requireCode=${!target.entryId}
         .startScanning=${this._startScanning}
         .canGoBack=${!target.skipChooser}

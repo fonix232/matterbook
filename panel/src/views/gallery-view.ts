@@ -12,7 +12,7 @@ import { customElement, property } from "lit/decorators.js";
 
 import { sharedStyles } from "../styles";
 import type { BookEntry } from "../types";
-import type { EditEntryRequest } from "./book-view";
+import type { EntryAction, EntryActionKind } from "./book-view";
 
 @customElement("matterbook-gallery-view")
 export class MatterBookGalleryView extends LitElement {
@@ -36,16 +36,7 @@ export class MatterBookGalleryView extends LitElement {
   private _renderEntry(entry: BookEntry): TemplateResult {
     return html`
       <figure>
-        ${entry.qr_url
-          ? html`
-              <img
-                class="label-image"
-                src=${entry.qr_url}
-                alt=${`QR label for ${entry.name || "this entry"}`}
-                loading="lazy"
-              />
-            `
-          : html`<div class="no-label">${this._absence(entry)}</div>`}
+        ${this._renderPicture(entry)}
         <figcaption>
           <strong>${entry.name || html`<span class="muted">unnamed</span>`}</strong>
           ${entry.code
@@ -53,11 +44,59 @@ export class MatterBookGalleryView extends LitElement {
             : html`<span class="muted">no code yet</span>`}
           ${entry.area ? html`<span class="muted">${entry.area}</span>` : nothing}
           <span class="badge ${entry.status}">${entry.status}</span>
-          <button class="link" ?disabled=${this.busy} @click=${() => this._requestEdit(entry)}>
-            Edit
-          </button>
+          <div class="row-actions">
+            <button class="link" ?disabled=${this.busy} @click=${() => this._act("edit", entry)}>
+              Edit
+            </button>
+            ${entry.code
+              ? html`
+                  <button
+                    class="link"
+                    ?disabled=${this.busy}
+                    @click=${() => this._act("reveal", entry)}
+                  >
+                    Show code
+                  </button>
+                `
+              : nothing}
+            ${entry.node_id !== null
+              ? html`
+                  <button
+                    class="link"
+                    ?disabled=${this.busy}
+                    @click=${() => this._act("identify", entry)}
+                  >
+                    Identify
+                  </button>
+                `
+              : nothing}
+          </div>
         </figcaption>
       </figure>
+    `;
+  }
+
+  /**
+   * The photograph where there is one, the rendered code otherwise.
+   *
+   * A gallery of stickers is what someone recognises a device by, and the
+   * rendered code is only the machine-readable part of a sticker. Where neither
+   * exists, saying which is missing is the useful thing.
+   */
+  private _renderPicture(entry: BookEntry): TemplateResult {
+    const source = entry.label_url ?? entry.qr_url;
+    if (!source) {
+      return html`<div class="no-label">${this._absence(entry)}</div>`;
+    }
+    return html`
+      <img
+        class="label-image"
+        src=${source}
+        alt=${`${entry.label_url ? "Label photograph" : "QR label"} for ${
+          entry.name || "this entry"
+        }`}
+        loading="lazy"
+      />
     `;
   }
 
@@ -72,10 +111,10 @@ export class MatterBookGalleryView extends LitElement {
     return "Digits, not a QR. Drawing one would scan and then fail in a Matter app.";
   }
 
-  private _requestEdit(entry: BookEntry): void {
+  private _act(action: EntryActionKind, entry: BookEntry): void {
     this.dispatchEvent(
-      new CustomEvent<EditEntryRequest>("matterbook-edit-entry", {
-        detail: { entryId: entry.id },
+      new CustomEvent<EntryAction>("matterbook-entry-action", {
+        detail: { action, entryId: entry.id },
         bubbles: true,
         composed: true,
       }),

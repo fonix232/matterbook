@@ -10,6 +10,9 @@ passcode, so it cannot leak one into a screenshot or a browser cache.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import logging
 from typing import Any, Final
 
 import voluptuous as vol
@@ -41,14 +44,21 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import MatterBookCoordinator
-from .http import async_signed_qr_url
+from .http import async_signed_label_url, async_signed_qr_url
+from .labels import MAX_BYTES, LabelError
 from .matching import DiscoveredDevice
 from .matter_link import MatterUnavailable
 from .pairing_code import InvalidSetupCode
 from .qr import qr_payload
 from .store import MatterBookEntry, MatterBookError
 
+_LOGGER = logging.getLogger(__name__)
+
 TYPE: Final = "type"
+
+# Long enough for someone to walk to the device and see it; short enough that a
+# forgotten click stops being a blinking light in a bedroom.
+IDENTIFY_SECONDS: Final = 15
 
 
 @callback
@@ -64,6 +74,9 @@ def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_set_code)
     websocket_api.async_register_command(hass, websocket_get_options)
     websocket_api.async_register_command(hass, websocket_set_options)
+    websocket_api.async_register_command(hass, websocket_reveal)
+    websocket_api.async_register_command(hass, websocket_identify)
+    websocket_api.async_register_command(hass, websocket_set_label)
 
 
 @callback
@@ -138,11 +151,19 @@ def _entry_payload(
     panel without label pictures rather than a panel that fails.
     """
     payload = entry.redacted()
-    payload["qr_url"] = (
-        async_signed_qr_url(hass, entry.id, refresh_token_id, entry.code)
-        if refresh_token_id is not None and qr_payload(entry) is not None
-        else None
-    )
+    payload["qr_url"] = None
+    payload["label_url"] = None
+    if refresh_token_id is None:
+        return payload
+
+    if qr_payload(entry) is not None:
+        payload["qr_url"] = async_signed_qr_url(
+            hass, entry.id, refresh_token_id, entry.code
+        )
+    if entry.label_image:
+        payload["label_url"] = async_signed_label_url(
+            hass, entry.id, refresh_token_id, entry.label_image
+        )
     return payload
 
 
@@ -489,3 +510,121 @@ async def websocket_set_options(
     assert entry is not None
     hass.config_entries.async_update_entry(entry, options={**entry.options, **msg["options"]})
     connection.send_result(msg["id"], {**OPTION_DEFAULTS, **entry.options, **msg["options"]})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required(TYPE): "matterbook/reveal", vol.Required("entry_id"): str}
+)
+@callback
+def websocket_reveal(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Return one row's setup code, unmasked.
+
+    The deliberate exception to masking everything else. It is needed for the
+    rows the panel cannot show a picture of — a manual pairing code and a bare
+    passcode are digits, not QR payloads, so there is no label to scan off the
+    screen and reading the number out is the only way to give it to another
+    controller's app.
+
+    Asking is logged. A book of passcodes should be able to say when one was
+    taken out of it.
+    """
+    coordinator = _require_coordinator(hass, connection, msg)
+    if coordinator is None:
+        return
+
+    entry = next(
+        (item for item in coordinator.data.entries if item.id == msg["entry_id"]), None
+    )
+    if entry is None:
+        connection.send_error(
+            msg["id"],
+            websocket_api.ERR_NOT_FOUND,
+            f"No MatterBook entry with id {msg['entry_id']}",
+        )
+        return
+
+    _LOGGER.info(
+        "Setup code for MatterBook entry %s (%s) revealed to %s",
+        entry.id,
+        entry.name or "unnamed",
+        connection.user.name,
+    )
+    connection.send_result(msg["id"], {"entry_id": entry.id, "code": entry.code})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required(TYPE): "matterbook/identify", vol.Required("entry_id"): str}
+)
+@websocket_api.async_response
+async def websocket_identify(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Make a paired row's device blink, so it can be told from its twin."""
+    coordinator = _require_coordinator(hass, connection, msg)
+    if coordinator is None:
+        return
+
+    entry = next(
+        (item for item in coordinator.data.entries if item.id == msg["entry_id"]), None
+    )
+    if entry is None:
+        connection.send_error(
+            msg["id"],
+            websocket_api.ERR_NOT_FOUND,
+            f"No MatterBook entry with id {msg['entry_id']}",
+        )
+        return
+
+    try:
+        await coordinator.async_identify(entry, seconds=IDENTIFY_SECONDS)
+    except MatterUnavailable as err:
+        connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, str(err))
+        return
+
+    connection.send_result(msg["id"], {"seconds": IDENTIFY_SECONDS})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        vol.Required(TYPE): "matterbook/set_label",
+        vol.Required("entry_id"): str,
+        # Base64 because a WebSocket command is JSON. `None` clears the label,
+        # which is why this is one command rather than an upload and a delete.
+        vol.Required("image"): vol.Any(None, vol.All(str, vol.Length(max=MAX_BYTES * 2))),
+    }
+)
+@websocket_api.async_response
+async def websocket_set_label(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Store a photograph of a row's label, or clear the one it has."""
+    coordinator = _require_coordinator(hass, connection, msg)
+    if coordinator is None:
+        return
+
+    encoded = msg["image"]
+    data: bytes | None = None
+    if encoded is not None:
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as err:
+            connection.send_error(
+                msg["id"], websocket_api.ERR_INVALID_FORMAT, f"That was not base64: {err}"
+            )
+            return
+
+    try:
+        entry = await coordinator.async_set_label(msg["entry_id"], data)
+    except LabelError as err:
+        connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, str(err))
+        return
+    except MatterBookError as err:
+        connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, str(err))
+        return
+
+    connection.send_result(msg["id"], _entry_payload(hass, entry, _refresh_token_id(connection)))

@@ -10,8 +10,11 @@ const IDENTITY_LABEL: Record<IdentityStrength, string> = {
   none: "None",
 };
 
-/** Asks the panel to open the edit dialog on this row. */
-export interface EditEntryRequest {
+/** Something a row offers to do with itself. */
+export type EntryActionKind = "edit" | "reveal" | "identify" | "toggle" | "remove";
+
+export interface EntryAction {
+  action: EntryActionKind;
   entryId: string;
 }
 
@@ -64,10 +67,13 @@ export class MatterBookBookView extends LitElement {
 
   private _renderRow(entry: BookEntry): TemplateResult {
     return html`
-      <tr>
+      <tr class=${entry.enabled ? "" : "disabled"}>
         <td>${this._renderLabel(entry)}</td>
         <td>
           ${entry.name || html`<span class="muted">unnamed</span>`}
+          ${entry.enabled
+            ? nothing
+            : html`<div class="muted" title="Auto-pairing skips this row.">disabled</div>`}
           ${entry.notes ? html`<div class="muted">${entry.notes}</div>` : nothing}
         </td>
         <td>${entry.code ? this._renderCode(entry) : this._renderMissingCode(entry)}</td>
@@ -93,11 +99,7 @@ export class MatterBookBookView extends LitElement {
             : nothing}
         </td>
         <td class="optional">${entry.area || html`<span class="muted">—</span>`}</td>
-        <td>
-          <button class="secondary" ?disabled=${this.busy} @click=${() => this._requestEdit(entry)}>
-            Edit
-          </button>
-        </td>
+        <td>${this._renderActions(entry)}</td>
       </tr>
     `;
   }
@@ -111,6 +113,18 @@ export class MatterBookBookView extends LitElement {
    * sticker again.
    */
   private _renderLabel(entry: BookEntry): TemplateResult {
+    if (entry.label_url) {
+      // The photograph wins: it is the label, where the rendered code is only
+      // the part of it a machine reads.
+      return html`
+        <img
+          class="label-image"
+          src=${entry.label_url}
+          alt=${`Label photograph for ${entry.name || "this entry"}`}
+          loading="lazy"
+        />
+      `;
+    }
     if (entry.qr_url) {
       return html`
         <img
@@ -142,14 +156,64 @@ export class MatterBookBookView extends LitElement {
    */
   private _renderMissingCode(entry: BookEntry): TemplateResult {
     return html`
-      <button ?disabled=${this.busy} @click=${() => this._requestEdit(entry)}>Add code</button>
+      <button ?disabled=${this.busy} @click=${() => this._act("edit", entry)}>Add code</button>
     `;
   }
 
-  private _requestEdit(entry: BookEntry): void {
+  /**
+   * What a row can do.
+   *
+   * Edit is the common one and stays a button; the rest are a menu, because a
+   * row of six buttons is not a table any more. Reveal is offered on every row
+   * that has a code, but it matters most on the ones with no picture — the
+   * label already puts a QR row on screen to be scanned.
+   */
+  private _renderActions(entry: BookEntry): TemplateResult {
+    return html`
+      <div class="row-actions">
+        <button class="secondary" ?disabled=${this.busy} @click=${() => this._act("edit", entry)}>
+          Edit
+        </button>
+        ${entry.code
+          ? html`
+              <button class="link" ?disabled=${this.busy} @click=${() => this._act("reveal", entry)}>
+                Show code
+              </button>
+            `
+          : nothing}
+        ${entry.node_id !== null
+          ? html`
+              <button
+                class="link"
+                title="Blink the device, to tell it from an identical one"
+                ?disabled=${this.busy}
+                @click=${() => this._act("identify", entry)}
+              >
+                Identify
+              </button>
+            `
+          : nothing}
+        <button
+          class="link"
+          title=${entry.enabled
+            ? "Leave this row in the book but stop auto-pairing from it"
+            : "Let auto-pairing use this row again"}
+          ?disabled=${this.busy}
+          @click=${() => this._act("toggle", entry)}
+        >
+          ${entry.enabled ? "Disable" : "Enable"}
+        </button>
+        <button class="link danger" ?disabled=${this.busy} @click=${() => this._act("remove", entry)}>
+          Delete
+        </button>
+      </div>
+    `;
+  }
+
+  private _act(action: EntryActionKind, entry: BookEntry): void {
     this.dispatchEvent(
-      new CustomEvent<EditEntryRequest>("matterbook-edit-entry", {
-        detail: { entryId: entry.id },
+      new CustomEvent<EntryAction>("matterbook-entry-action", {
+        detail: { action, entryId: entry.id },
         bubbles: true,
         composed: true,
       }),
